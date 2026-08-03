@@ -1,0 +1,9 @@
+numpy>=1.24
+scipy>=1.10
+
+[dev]
+pytest>=8.0
+
+[plot]
+pyvista>=0.44
+matplotlib>=3.7

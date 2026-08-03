@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytrees"
+version = "0.0.1"
+description = "Python port of the TREES toolbox for neuronal tree reconstruction, editing, analysis and synthesis."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+plot = ["pyvista>=0.44", "matplotlib>=3.7"]
+# NEURON has no Windows pip wheel -- Windows users need the official binary
+# installer (neuronsimulator.github.io) instead; this extra is a convenience
+# for Linux/macOS, where `pip install neuron` works directly.
+neuron = ["neuron>=8.0"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pytrees = ["data/*.swc", "data/*.npz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
