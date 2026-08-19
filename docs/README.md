@@ -9,6 +9,8 @@ analyse, simulate and visualise neuronal morphologies.
 | [guide.md](guide.md) | Task-oriented walkthrough: loading, measuring, editing, plotting, simulating. |
 | [matlab-migration.md](matlab-migration.md) | For people who know the MATLAB toolbox: what changed, what's named differently, what deliberately isn't ported. |
 | [port-audit.md](port-audit.md) | Faithfulness/performance/bug audit against the MATLAB original. |
+| [../REVIEW_PLAN.md](../REVIEW_PLAN.md) | The function-by-function review and the plan responding to it. |
+| [../NOT_YET_PORTED.md](../NOT_YET_PORTED.md) | Complete inventory of what is not ported, and why. |
 | [api-overview.md](api-overview.md) | Every public function grouped by what it's for. |
 
 Runnable tutorials live in [`../examples/`](../examples/):
@@ -30,14 +32,36 @@ and why — plus a dated design-decisions log. Bugs found in the original MATLAB
 code while porting are catalogued in
 [`../MATLAB_TOOLBOX_BUGS.md`](../MATLAB_TOOLBOX_BUGS.md).
 
+## Recent API changes
+
+If you have code written against an earlier version, three conventions
+changed (full reasoning in `PORT_STATUS.md`, decisions #40-#42):
+
+| Was | Now |
+|---|---|
+| `tree, order = sort_tree(t)` | `tree = sort_tree(t)`, or `full_output=True` for both |
+| `idpar_tree(t, no_self=True)` | `idpar_tree(t, root_self=False)` |
+| `len_tree(t, dim2=True)` | `len_tree(t, dim=2)` |
+| `mask = sub_tree(t, n)` | `mask, subtree = sub_tree(t, n)` |
+| `sample_tree()` → 2252 nodes | `sample_tree()` → 197 nodes; the old tree is `hss_tree()` |
+
+The renamed keywords keep working for one release with a
+`DeprecationWarning`. The return-value change does not — but it cannot fail
+silently either: unpacking a `Tree` raises `TypeError: cannot unpack
+non-iterable Tree object` right at the call site.
+
 ## Install
 
 ```bash
 cd python_port
 conda create -n pytrees python=3.11 -y
 conda activate pytrees
-pip install -e ".[plot,dev]"
+pip install -e ".[plot,matlab,dev]"
 ```
+
+The `matlab` extra pulls in `mat73`, needed to read MATLAB **v7.3** `.mat`
+/`.mtr` files — which is what MATLAB's own `save_tree` writes, always. Without
+it, `.mtr` files from a current TREES install cannot be opened.
 
 NEURON (for `pytrees.neuron_bridge`) is a separate install — see
 [guide.md](guide.md#simulating-with-neuron).

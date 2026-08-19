@@ -4,7 +4,7 @@ For people who already know `treestoolbox-master`. Function names are kept
 identical wherever possible, so most of your knowledge transfers directly —
 but a few conventions changed deliberately.
 
-## The five things that will bite you
+## The six things that will bite you
 
 ### 1. Indexing is 0-based
 
@@ -27,7 +27,7 @@ MATLAB uses `0` as the sentinel, which is safe only because `0` isn't a valid
 ```python
 from pytrees import NO_PARENT, idpar_tree, ipar_tree   # NO_PARENT == -1
 
-idpar_tree(tree, no_self=True)[0]   # -1
+idpar_tree(tree, root_self=False)[0]   # -1
 ipar_tree(tree)                     # padded with -1, not 0
 ```
 
@@ -42,15 +42,33 @@ that parser as a recurring source of bugs.)
 
 | MATLAB | pytrees |
 |---|---|
-| `len_tree(tree, '-dim2')` | `len_tree(tree, dim2=True)` |
+| `len_tree(tree, '-dim2')` | `len_tree(tree, dim=2)` |
 | `sort_tree(tree, '-LO')` | `sort_tree(tree, by="lo")` |
-| `idpar_tree(tree, '-0')` | `idpar_tree(tree, no_self=True)` |
+| `idpar_tree(tree, '-0')` | `idpar_tree(tree, root_self=False)` |
 | `flip_tree(tree, 1)` | `flip_tree(tree, axis="x")` |
 | `sholl_tree(tree, dd, '-o')` | `sholl_tree(tree, dd, single_only=True)` |
 | `asym_tree(tree, [], '-v')` | `asym_tree(tree, van_pelt=True)` |
 | `delete_tree(tree, i, '-r')` | `delete_tree(tree, i, keep_regions=True)` |
 
-### 4. `'-s'` (show) is gone everywhere — plot the result yourself
+### 4. Sample trees: `sample_tree()` is MATLAB's sample again
+
+All four MATLAB sample loaders are ported, with MATLAB's meanings:
+
+| pytrees | file | nodes | |
+|---|---|---|---|
+| `sample_tree()` | `sample.mtr` | 197 | subtree of an HSN cell |
+| `sample2_tree()` | `sample2.mtr` | 15 | minimal tree |
+| `hsn_tree()` | `hsn.mtr` | 1290 | full HSN cell |
+| `hss_tree()` | `hss.mtr` | 2252 | full HSS cell |
+| `dLPTCs_trees()` | `dLPTCs.mtr` | 55 trees | 5 named groups, for `stats_tree` |
+
+**If you used `sample_tree()` before pytrees 0.0.2**, it returned a different
+cell — the 2252-node HSS reconstruction, loaded from SWC, back when `.mtr`
+reading wasn't implemented. That tree is now `hss_tree()`, and in its `.mtr`
+form it also regains what SWC had stripped: its real `axon`/`dend`/`soma`
+region names, and its original (un-mirrored) orientation.
+
+### 5. `'-s'` (show) is gone everywhere — plot the result yourself
 
 No function draws a figure as a side effect. This is more flexible:
 
@@ -58,10 +76,10 @@ No function draws a figure as a side effect. This is more flexible:
 BO_tree(tree, '-s');
 ```
 ```python
-plot_tree(tree, scalars=BO_tree(tree), cmap="viridis")
+plot_tree(tree, BO_tree(tree), cmap="viridis")
 ```
 
-### 5. Nothing mutates a global `trees` array
+### 6. Nothing mutates a global `trees` array
 
 MATLAB functions modify a global when called without an output. Here, editing
 functions always return a new tree and never touch the input:
@@ -107,7 +125,7 @@ while idpar(n) ~= 1
 end
 ```
 ```python
-idpar = idpar_tree(tree, no_self=True)
+idpar = idpar_tree(tree, root_self=False)
 n = start_node
 while idpar[n] != NO_PARENT:
     n = idpar[n]
@@ -128,8 +146,8 @@ Mostly to avoid ambiguity, since Python has no `'-s'` to disambiguate:
 
 | MATLAB | pytrees | Why |
 |---|---|---|
-| `dA_tree` | `dA_tree_mpl` | avoids reading as "plot the tree" |
-| `plot_tree` (matplotlib path) | `plot_tree_mpl` | `plot_tree` is the PyVista one |
+| `dA_tree` | `dA_tree` | avoids reading as "plot the tree" |
+| `plot_tree` (matplotlib path) | `plot_mpl_tree` | `plot_tree` is the PyVista one |
 | `stats_tree` + `dstats_tree` | `stats_tree` returning DataFrames | see below |
 | `neuron_template_tree`/`t2n` | `build_neuron_model` etc. | no `.hoc` text involved |
 
@@ -188,3 +206,20 @@ Briefly, with the reasoning in `PORT_STATUS.md`:
   Python arguments.
 - **T2N protocol library** (IV/FI/resonance/bAP) — thin wrappers over
   `run_current_clamp`; add on demand.
+
+### `plot_tree`'s `color` argument
+
+`color` is polymorphic exactly as in MATLAB, and the positional order now
+matches too — `plot_tree(tree, color, DD, ipart, res)`:
+
+```python
+plot_tree(tree, "red")                       # flat colour name
+plot_tree(tree, (1.0, 0.0, 0.0))             # flat RGB triple
+plot_tree(tree, BO_tree(tree))               # per-node values -> colormap
+plot_tree(tree, rgb_array)                   # (n_nodes, 3) explicit RGB
+plot_tree(tree, "blue", (100, 0, 0), nodes)  # MATLAB's DD and ipart
+```
+
+The one ambiguity is a **3-node tree**, where a length-3 vector could be an
+RGB triple or three per-node values; it is read as RGB, matching MATLAB.
+Pass `scalars=` to force the other reading.

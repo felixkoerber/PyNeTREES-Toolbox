@@ -32,6 +32,7 @@ priority relative to the core generative functions); `dscam_tree`
 from __future__ import annotations
 
 import heapq
+from typing import NamedTuple
 from importlib import resources
 
 import numpy as np
@@ -42,6 +43,7 @@ from scipy.spatial import cKDTree
 from .core import NO_PARENT, Tree
 from .edit import delete_tree, insert_tree
 from .graphtheory import (
+    B_tree,
     Pvec_tree,
     T_tree,
     _subtree_blocks,
@@ -58,32 +60,109 @@ from .metrics import direction_tree, eucl_tree, len_tree
 # ---------------------------------------------------------------------------
 
 
+class MSTResult(NamedTuple):
+    """Result of :func:`MST_tree` with ``full_output=True``."""
+
+    trees: "Tree | list[Tree]"
+    """The grown tree, or one per start point."""
+    connected: np.ndarray
+    """Boolean mask over the input points: did each end up in a tree?"""
+    indx: np.ndarray
+    """``(n_points, 2)``: for each input point, ``[tree index, node index
+    within that tree]``, or ``[-1, -1]`` if it was never connected. MATLAB's
+    second output."""
+    history: np.ndarray | None
+    """``(n_steps, 3)`` growth log ``[tree, point, parent point]`` in the
+    order points were attached, or ``None`` unless ``record=True``."""
+
+
 def MST_tree(
     X,
     Y,
     Z=None,
-    start: int = 0,
+    start=0,
     bf: float = 0.4,
     thr: float = 50.0,
     mplen: float = 10000.0,
     avoid_multifurcations: bool = False,
+    *,
+    dist=None,
+    cut_ends: bool = False,
+    record: bool = False,
+    full_output: bool = False,
 ):
-    """Grow a synthetic tree connecting the given points.
+    """Grow synthetic tree(s) connecting a cloud of points.
 
-    Greedily attaches the cheapest reachable point to the growing tree at
-    each step, where the cost of attaching point ``p`` to tree node ``t``
-    is ``distance(p, t) + bf * path_length(t)`` -- balancing minimal total
-    wiring (distance) against minimal conduction path length (`bf`, 0..1).
-    Points farther than ``thr`` from every tree node, or that would exceed
-    ``mplen`` total path length, are never connected and are dropped from
-    the output. ``avoid_multifurcations``, if set, refuses to attach a
-    third child to any node (MATLAB's ``'-b'``); some points may then be
-    left unconnected even if within range, if their only recorded
-    candidate attachment saturates before they're processed -- see
-    PORT_STATUS.md.
+    At each step the cheapest available attachment is made, where connecting
+    point ``p`` to tree node ``t`` costs::
 
-    Returns ``(tree, connected)``, where ``connected`` is a boolean mask
-    (length ``len(X)``) of which input points ended up in the tree.
+        distance(p, t)  +  bf * path_length(t)  [+ dist penalty]
+
+    balancing minimal total wiring against minimal conduction path length --
+    the Cuntz/Borst/Segev construction the toolbox is named after.
+
+    Parameters
+    ----------
+    X, Y, Z : array_like
+        Coordinates of the points to connect. ``Z`` defaults to zeros.
+    start : int or sequence of int, default 0
+        Index of the point to grow from. **Pass several indices to grow
+        several trees at once**, competing for the same cloud: every tree
+        bids for every point and the cheapest bid wins, so territories fall
+        out of the growth rather than being assigned. This is how a
+        population is grown into a shared field, and it is what MATLAB's
+        multi-`msttrees` mode is for.
+    bf : float, default 0.4
+        Balancing factor in ``[0, 1]``. ``0`` minimises wiring alone,
+        giving long meandering paths to the root; ``1`` minimises path
+        length, giving a star.
+    thr : float, default 50.0
+        Maximum span [um] of any single connection.
+    mplen : float, default 10000.0
+        Maximum path length [um] from the root; points beyond it stay
+        unconnected.
+    avoid_multifurcations : bool, default False
+        MATLAB's ``'-b'``. Refuse a third child on any node. Some points may
+        then stay unconnected even within ``thr``.
+    dist : scipy.sparse matrix, optional
+        MATLAB's ``DIST``: an ``(n_points, n_points)`` matrix of connection
+        *preferences*, where larger means more likely and zero means "no
+        particular reason to connect". Enters the cost as
+        ``max(dist) * (1 - dist[t, p] / max(dist))``, so the most-preferred
+        pairing pays nothing extra and an unlisted one pays the full range.
+
+        Indexed over the **input points only**. MATLAB instead requires the
+        caller to index it over the growing trees' own nodes as well ("Don't
+        forget to include input tree nodes into the distance matrix DIST!"),
+        which is easy to get wrong and impossible to check.
+    cut_ends : bool, default False
+        MATLAB's ``'-c'``. Grow only from points that have at least one
+        positive entry in ``dist`` -- the marked "cut ends". Requires
+        ``dist``.
+    record : bool, default False
+        MATLAB's ``'-t'``. Also return the growth history.
+    full_output : bool, default False
+        Return :class:`MSTResult` rather than just the tree(s).
+
+    Returns
+    -------
+    Tree or list[Tree] or MSTResult
+        A single Tree for a single start point, a list for several.
+
+    Notes
+    -----
+    Not a literal port: MATLAB's ~600-line version hand-maintains a
+    shrinking "vicinity window" per tree, re-sorted and re-sliced every
+    iteration, to avoid recomputing an O(n^2) distance matrix. This uses
+    `scipy.spatial.cKDTree` for the radius queries and a lazy-deletion
+    min-heap for "cheapest valid candidate", the standard formulation for
+    Prim's-style growth where a node's best known cost only improves
+    (Design Decision #27).
+
+    ``record`` returns the growth **log**, not a list of intermediate trees
+    as MATLAB does: any intermediate state is a prefix of the log, so
+    storing whole trees per step would be quadratic in memory for
+    information already present.
     """
     X = np.asarray(X, dtype=float)
     Y = np.asarray(Y, dtype=float)
@@ -92,64 +171,126 @@ def MST_tree(
     coords = np.column_stack([X, Y, Z])
     kdtree = cKDTree(coords)
 
+    starts = np.atleast_1d(np.asarray(start, dtype=int))
+    if len(np.unique(starts)) != len(starts):
+        raise ValueError(f"start points must be distinct, got {starts.tolist()}")
+    if starts.min() < 0 or starts.max() >= n:
+        raise ValueError(f"start indices must lie in 0..{n - 1}")
+
+    dist_scale = 0.0
+    if dist is not None:
+        dist = sparse.csr_matrix(dist)
+        if dist.shape != (n, n):
+            raise ValueError(
+                f"dist must be ({n}, {n}) -- indexed over the input points; "
+                f"got {dist.shape}"
+            )
+        dist_scale = float(dist.max()) if dist.nnz else 0.0
+
+    growable = None
+    if cut_ends:
+        if dist is None:
+            raise ValueError("cut_ends=True needs dist= to mark the cut ends")
+        growable = np.zeros(n, dtype=bool)
+        growable[np.unique(sparse.find(dist)[0])] = True
+        growable[starts] = True
+
     connected = np.zeros(n, dtype=bool)
-    connected[start] = True
+    owner = np.full(n, -1, dtype=int)
     parent = np.full(n, NO_PARENT, dtype=int)
     plen = np.zeros(n)
     children_count = np.zeros(n, dtype=int)
-    order = [start]
+    order: list[list[int]] = [[s] for s in starts]
+    history: list[tuple[int, int, int]] = []
+
+    for tree_index, s in enumerate(starts):
+        connected[s] = True
+        owner[s] = tree_index
 
     best_cost = np.full(n, np.inf)
-    heap: list[tuple[float, int, int]] = []
+    heap: list[tuple[float, int, int, int]] = []
 
-    def push_from(node: int) -> None:
+    def extra_cost(node: int, point: int) -> float:
+        """The `dist` preference term, in the same units as distance."""
+        if dist is None or dist_scale == 0.0:
+            return 0.0
+        return dist_scale * (1.0 - dist[node, point] / dist_scale)
+
+    def push_from(node: int, tree_index: int) -> None:
         if avoid_multifurcations and children_count[node] >= 2:
+            return
+        if growable is not None and not growable[node]:
             return
         for p in kdtree.query_ball_point(coords[node], r=thr):
             if p == node or connected[p]:
                 continue
-            cost = float(np.linalg.norm(coords[p] - coords[node])) + bf * plen[node]
+            cost = (
+                float(np.linalg.norm(coords[p] - coords[node]))
+                + bf * plen[node]
+                + extra_cost(node, p)
+            )
             if cost < best_cost[p]:
                 best_cost[p] = cost
-                heapq.heappush(heap, (cost, p, node))
+                heapq.heappush(heap, (cost, p, node, tree_index))
 
-    push_from(start)
+    for tree_index, s in enumerate(starts):
+        push_from(int(s), tree_index)
+
     while heap:
-        cost, p, attach = heapq.heappop(heap)
+        cost, p, attach, tree_index = heapq.heappop(heap)
         if connected[p] or cost > best_cost[p]:
             continue  # stale heap entry (lazy deletion)
         if avoid_multifurcations and children_count[attach] >= 2:
             continue
-        d = float(np.linalg.norm(coords[p] - coords[attach]))
-        new_plen = plen[attach] + d
+        span = float(np.linalg.norm(coords[p] - coords[attach]))
+        new_plen = plen[attach] + span
         if new_plen > mplen:
             continue
         connected[p] = True
+        owner[p] = tree_index
         parent[p] = attach
         plen[p] = new_plen
         children_count[attach] += 1
-        order.append(p)
-        push_from(p)
+        order[tree_index].append(p)
+        if record:
+            history.append((tree_index, p, attach))
+        push_from(p, tree_index)
 
-    order_arr = np.array(order)
-    old_to_new = {old: new for new, old in enumerate(order_arr)}
-    rows, cols = [], []
-    for new, old in enumerate(order_arr):
-        if old == start:
-            continue
-        rows.append(new)
-        cols.append(old_to_new[parent[old]])
-    n_out = len(order_arr)
-    dA = sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n_out, n_out)).tocsr()
+    trees = []
+    indx = np.full((n, 2), -1, dtype=int)
+    for tree_index, member_order in enumerate(order):
+        member_arr = np.array(member_order)
+        old_to_new = {old: new for new, old in enumerate(member_arr)}
+        indx[member_arr, 0] = tree_index
+        indx[member_arr, 1] = np.arange(len(member_arr))
 
-    tree = Tree(
-        dA=dA,
-        X=X[order_arr], Y=Y[order_arr], Z=Z[order_arr],
-        D=np.ones(n_out), R=np.zeros(n_out, dtype=int), rnames=["tree"],
-        name="MST",
-    )
-    return tree, connected
+        rows, cols = [], []
+        for new, old in enumerate(member_arr):
+            if parent[old] == NO_PARENT:
+                continue
+            rows.append(new)
+            cols.append(old_to_new[parent[old]])
+        n_out = len(member_arr)
+        dA = sparse.coo_matrix(
+            (np.ones(len(rows)), (rows, cols)), shape=(n_out, n_out)
+        ).tocsr()
+        trees.append(
+            Tree(
+                dA=dA,
+                X=X[member_arr], Y=Y[member_arr], Z=Z[member_arr],
+                D=np.ones(n_out), R=np.zeros(n_out, dtype=int),
+                rnames=["tree"],
+                name="MST" if len(starts) == 1 else f"MST{tree_index}",
+            )
+        )
 
+    result = trees[0] if len(starts) == 1 else trees
+    if full_output:
+        return MSTResult(
+            result, connected, indx,
+            np.array(history, dtype=int).reshape(-1, 3) if record else None,
+        )
+    return result
 
 # ---------------------------------------------------------------------------
 # BCT strings: topology-only tree construction/validation/enumeration
@@ -220,7 +361,7 @@ def allBCTs_tree(n: int = 8, with_trees: bool = False):
     """
     canon = []
     for seq in _all_conform_sequences(n, (0, 1, 2)):
-        resorted, _ = sort_tree(BCT_tree(seq), by="lo")
+        resorted = sort_tree(BCT_tree(seq), by="lo")
         canon.append(np.asarray(resorted.dA.sum(axis=0)).ravel())
     bcts = np.unique(np.array(canon), axis=0) if canon else np.empty((0, n))
     if not with_trees:
@@ -234,7 +375,7 @@ def allBTs_tree(n: int = 15, with_trees: bool = False):
     by the definition of a full binary tree."""
     canon = []
     for seq in _all_conform_sequences(n, (0, 2)):
-        resorted, _ = sort_tree(BCT_tree(seq), by="lo")
+        resorted = sort_tree(BCT_tree(seq), by="lo")
         canon.append(np.asarray(resorted.dA.sum(axis=0)).ravel())
     bts = np.unique(np.array(canon), axis=0) if canon else np.empty((0, n))
     if not with_trees:
@@ -255,7 +396,7 @@ def clean_tree(tree: Tree, radius: float = 1.0) -> Tree:
     per call -- run repeatedly for further cleanup, as the MATLAB
     docstring also recommends.
     """
-    tree, _ = sort_tree(tree, by="lo")
+    tree = sort_tree(tree, by="lo")
     D = tree.D
     length = len_tree(tree)
     typeN = np.asarray(tree.dA.sum(axis=0)).ravel()
@@ -292,26 +433,89 @@ def clean_tree(tree: Tree, radius: float = 1.0) -> Tree:
     return result
 
 
+def _overlap_factor(tree: Tree) -> np.ndarray:
+    """Per-node ``sqrt(2) ** (branches passed)``, for soma surface correction.
+
+    Two cylinders meeting at a branch point share membrane that neither
+    NEURON nor this toolbox subtracts, so summed surface area over-counts
+    at every bifurcation. Dividing each daughter's diameter by ``sqrt(2)``
+    restores the total: two cylinders of diameter ``d/sqrt(2)`` have the
+    same combined circumference-times-length as one of diameter ``d``.
+
+    A branch directly at the root whose two daughters diverge by more than
+    90 degrees is exempted: that is a soma sending off an axon in one
+    direction and a dendrite in the other, not a dendrite splitting in two,
+    so no membrane is being shared.
+    """
+    branch = B_tree(tree)
+    # branch order: how many branch points lie on the path from the root
+    passed = Pvec_tree(tree, branch.astype(float))
+    # at a branch point itself the split has not happened yet
+    passed[branch] -= 1
+
+    root = tree.root
+    children = np.flatnonzero(np.asarray(tree.dA.getcol(root).todense()).ravel())
+    exempt = 0
+    if len(children) >= 2:
+        direction = direction_tree(tree, normalize=True)
+        d0, d1 = direction[children[0]], direction[children[1]]
+        angle = np.degrees(
+            np.arctan2(np.linalg.norm(np.cross(d0, d1)), float(np.dot(d0, d1)))
+        )
+        if abs(angle) > 90.0:
+            exempt = 1
+
+    return np.sqrt(2.0) ** (passed - exempt)
+
+
 def soma_tree(
-    tree: Tree, maxD: float = 30.0, length: float | None = None, tag_region: bool = False
+    tree: Tree, maxD: float = 30.0, length: float | None = None,
+    tag_region: bool = False, overlap_correction: bool = False,
 ) -> Tree:
     """Reshape diameter near the root into a cosine soma profile of
     (approximate) target diameter ``maxD`` and length ``length``
     (default ``1.5 * maxD``). If ``tag_region``, affected nodes are
     (re)labeled with a ``"soma"`` region.
 
-    MATLAB's ``'-b'`` overlap-correction option (reduce diameter past a
-    branch point near the soma by sqrt(2), to compensate for double-
-    counted surface area) is not ported -- a subtle, physiologically-
-    motivated correction, not core to "add a soma".
+    Parameters
+    ----------
+    tree : Tree
+    maxD : float, default 30.0
+        Peak soma diameter [um], reached at the root.
+    length : float, optional
+        Axial extent of the soma profile [um]; defaults to ``1.5 * maxD``.
+        The cosine falls to zero at ``length / 2``, which is where the
+        reshaping stops.
+    tag_region : bool, default False
+        Label the affected nodes with a ``"soma"`` region.
+    overlap_correction : bool, default False
+        MATLAB's ``'-b'``. Divide diameters by ``sqrt(2)`` for each branch
+        point already passed, so that two cylinders meeting at a branch do
+        not double-count the membrane they share. Neither NEURON nor this
+        toolbox models overlapping surfaces, so without it the soma's
+        surface area -- and hence its input conductance -- comes out too
+        large wherever the soma spans a bifurcation.
+
+        A branch straight off the root whose daughters diverge by more than
+        90 degrees is treated as soma-to-axon plus soma-to-dendrite rather
+        than a true bifurcation, and does not count.
+
+    Returns
+    -------
+    Tree
     """
     if length is None:
         length = 1.5 * maxD
-    Plen = Pvec_tree(tree, len_tree(tree))
+    Plen = Pvec_tree(tree)
     idx = np.flatnonzero(Plen < length / 2)
 
     D = tree.D.copy()
-    D[idx] = np.maximum(D[idx], maxD * np.cos(np.pi * Plen[idx] / length))
+    profile = maxD * np.cos(np.pi * Plen[idx] / length)
+
+    if overlap_correction:
+        profile = profile / _overlap_factor(tree)[idx]
+
+    D[idx] = np.maximum(D[idx], profile)
 
     R, rnames = tree.R.copy(), list(tree.rnames)
     if tag_region:
@@ -326,38 +530,72 @@ def soma_tree(
 
 
 def cap_tree(tree: Tree, spacing: float = 1.0) -> Tree:
-    """Cap the open end at the root with small segments approximating a
-    rounded (spherical) cap, ``spacing`` um apart, so the soma doesn't end
-    in a flat, artificial-looking cut.
+    """Cap the tree's open root end with a rounded (hemispherical) profile.
 
-    MATLAB's ``'-a'`` axon-adding option is not ported -- it draws its
-    length/diameter/taper from hardcoded statistical parameters specific
-    to one published dataset, not a general capping algorithm.
+    A flat-cut soma looks artificial and, more importantly, under-counts
+    membrane area at the very place where input resistance is measured. This
+    adds a short chain of tapering segments extending *backwards* from the
+    root -- away from the tree -- whose diameters trace a spherical cap of
+    the root's own diameter.
+
+    Parameters
+    ----------
+    tree : Tree
+    spacing : float, default 1.0
+        Distance [um] between successive cap nodes.
+
+    Returns
+    -------
+    Tree
+        The tree with cap nodes appended, or the input unchanged if the root
+        is too thin for even one cap node at this ``spacing``.
+
+    Notes
+    -----
+    The cap grows from :attr:`Tree.root` along the *reverse* of that node's
+    own segment direction. MATLAB's ``cap_tree.m`` hardcodes ``tree.X(1)``
+    and ``direction(2, :)``, and this port transliterated both -- correct
+    only after ``sort_tree``. On a tree whose root sits elsewhere it capped
+    the wrong end entirely (Design Decision #48).
+
+    MATLAB's ``'-a'`` axon-adding option is deliberately not ported here: it
+    draws length, diameter and taper from constants fit to one published
+    dataset, which makes it a dataset-specific generator rather than part of
+    a capping algorithm, and folding it into this function makes it easy to
+    apply by accident.
     """
+    root = tree.root
     direction = direction_tree(tree, normalize=True)
-    width = tree.D[0]
-    X0, Y0, Z0 = tree.X[0], tree.Y[0], tree.Z[0]
+    width = tree.D[root]
+    X0, Y0, Z0 = tree.X[root], tree.Y[root], tree.Z[root]
+
+    # The root's own `direction` entry is degenerate (it has no parent
+    # segment), so the outward normal comes from its first child instead --
+    # the cap must extend away from wherever the tree actually goes.
+    children = np.flatnonzero(np.asarray(tree.dA.getcol(root).todense()).ravel())
+    if len(children) == 0:
+        return tree
+    outward = direction[children[0]]
 
     new_X, new_Y, new_Z, new_D, new_parent = [], [], [], [], []
-    parent = 0
+    parent = root
     for dist in np.arange(spacing, width, spacing):
         remaining = width**2 - 2 * dist**2
         d = float(np.sqrt(remaining)) if remaining > 0 else 0.0
         if d <= 0:
             continue
-        new_X.append(X0 - dist * direction[1, 0])
-        new_Y.append(Y0 - dist * direction[1, 1])
-        new_Z.append(Z0 - dist * direction[1, 2])
+        new_X.append(X0 - dist * outward[0])
+        new_Y.append(Y0 - dist * outward[1])
+        new_Z.append(Z0 - dist * outward[2])
         new_D.append(d)
         new_parent.append(parent)
+        # each cap node parents the next: `insert_tree` explicitly supports
+        # new nodes parenting earlier new nodes, and validates the ordering
         parent = tree.n_nodes + len(new_X) - 1
 
     if not new_X:
         return tree
-    # R is passed explicitly (not left to insert_tree's tree.R[parent]
-    # default) since `new_parent` chains through newly-inserted nodes,
-    # which don't have an entry in the original tree.R yet.
-    root_region = np.full(len(new_X), tree.R[0], dtype=int)
+    root_region = np.full(len(new_X), tree.R[root], dtype=int)
     return insert_tree(
         tree, X=new_X, Y=new_Y, Z=new_Z, D=new_D, parent=new_parent, R=root_region
     )
@@ -427,7 +665,7 @@ def jitter_tree(tree: Tree, stde: float = 1.0, lam: int = 10, ipart=None, rng=No
     )
 
 
-def smoothbranch(X, Y, Z, p: float, n: int):
+def _smoothbranch(X, Y, Z, p: float, n: int):
     """Smooth a single consecutive path of 3D points (endpoints fixed),
     ``n`` iterations of pulling each interior point ``p`` (0..1) toward
     its projection onto the line between its neighbors."""
@@ -458,7 +696,7 @@ def smooth_tree(tree: Tree, pwchild: float = 0.5, p: float = 0.9, n: int = 5) ->
     sect = dissect_tree(tree).tolist()
     ipar = ipar_tree(tree)
     blocks = _subtree_blocks(tree.dA)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
     nchild = child_tree(tree)
 
     counter = 0
@@ -504,7 +742,7 @@ def smooth_tree(tree: Tree, pwchild: float = 0.5, p: float = 0.9, n: int = 5) ->
     for start, end in sect:
         row = ipar[end]
         path = row[: int(np.flatnonzero(row == start)[0]) + 1][::-1]
-        Xs, Ys, Zs = smoothbranch(tree.X[path], tree.Y[path], tree.Z[path], p, n)
+        Xs, Ys, Zs = _smoothbranch(tree.X[path], tree.Y[path], tree.Z[path], p, n)
         X[path], Y[path], Z[path] = Xs, Ys, Zs
 
     return tree.with_coords(X=X, Y=Y, Z=Z)

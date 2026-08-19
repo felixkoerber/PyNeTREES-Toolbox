@@ -16,18 +16,30 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-plot = ["pyvista>=0.44", "matplotlib>=3.7"]
+# scikit-image supplies marching cubes for hull_tree's 3D isosurface;
+# the 2D contour path needs only matplotlib.
+plot = ["pyvista>=0.44", "matplotlib>=3.7", "scikit-image>=0.22"]
 # NEURON has no Windows pip wheel -- Windows users need the official binary
 # installer (neuronsimulator.github.io) instead; this extra is a convenience
 # for Linux/macOS, where `pip install neuron` works directly.
 neuron = ["neuron>=8.0"]
+# MATLAB v7.3 (.mat/.mtr) files are HDF5, which scipy.io cannot read -- and
+# MATLAB's own save_tree writes v7.3 unconditionally, so this is needed for
+# any .mtr produced by a current TREES install. mat73 is used rather than
+# pymatreader/hdf5storage because it is the only one that dereferences
+# nested cell arrays of structs; see io/_matlab.py and Design Decision #47.
+matlab = ["mat73>=0.60"]
+# .nmf is HDF5 too. h5py already arrives with `matlab` (mat73 depends on
+# it), so this extra exists only so that "I want .nmf" does not read as
+# "I want MATLAB support".
+nmf = ["h5py>=3.8"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pytrees = ["data/*.swc", "data/*.npz"]
+pytrees = ["data/*.swc", "data/*.npz", "data/*.mtr"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

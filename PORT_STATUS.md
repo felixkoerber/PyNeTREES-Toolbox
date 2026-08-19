@@ -1151,3 +1151,535 @@ Dated, append-only. Each entry: what was decided, why, and what it changes going
     - Docs are checked against the code (a scratch script verified every
       backticked function name in `docs/` exists in `pytrees.__all__`, and
       that all 108 public symbols are mentioned somewhere).
+
+### 2026-08-18 — review response W1/W2/W4/W7 (see `REVIEW_PLAN.md`)
+
+Implementing the function-by-function review. Work packages W1 (naming and
+signature cleanup), W2 (I/O parity), W4 (return-value contract) and W7
+(correctness audit) landed together, since they touch the same signatures.
+
+40. **Dimensionality is always `dim: int` in `{2, 3}`.** Reason: three
+    spellings had accumulated for one concept -- `dim2: bool` (`cyl_tree`,
+    `len_tree`, `chull_tree`), `dim: int` (`eucl_tree`), and `dim: str`
+    (`"2d"`/`"3d"` in `vonMises_tree`, `bf_tree`). The integer form reads
+    naturally at the call site (`len_tree(t, dim=2)`), was already the
+    majority, and extends to `hull_tree` without a fourth spelling.
+    How to apply: new functions take `dim`, never a boolean flag.
+    Implementation note: the *signature* default is `None`, not `3`. Without
+    a sentinel there is no way to distinguish an explicit `dim=3` from the
+    default, so the contradiction `len_tree(t, dim=3, dim2=True)` would pass
+    silently; with one, it raises. Docstrings state the effective default.
+41. **No negated boolean parameters.** `idpar_tree(no_self=)` became
+    `root_self=` and `elimt_tree(no_root=)` became `at_root=`, defaults
+    flipped so behaviour is unchanged. Reason: a default of `no_self=False`
+    makes the reader resolve a double negative to work out what happens.
+    Both retired spellings still work for one release via
+    `pytrees/_compat.py`, raising `DeprecationWarning` -- verified against
+    `gc_model`, which was still calling `no_self=True` and kept working.
+42. **Multi-output functions return their primary result only; extras are
+    opted into with `full_output=True`.** Applies to `sort_tree`,
+    `redirect_tree`, `insertp_tree` and `insert_tree`; extras come back as
+    `NamedTuple`s (`SortResult`, `RedirectResult`, ...) so `result.order`
+    and tuple unpacking both work. `elimt_tree`'s `changed` flag was
+    **dropped entirely** (recomputable; now a `logging.debug` line).
+    Reason: the common case stops paying for the rare one. The evidence was
+    already in the codebase -- of the 9 internal call sites unpacking these
+    tuples, **7 wrote `tree, _ = ...`**.
+    Scope: only functions whose primary result is the `Tree`. `sholl_tree`,
+    `chull_tree`, `spread_tree`, `vonMises_tree` and `bf_tree` return
+    several co-equal results by nature and keep returning all of them.
+    **Deliberately shipped without a compatibility shim**, unlike #40/#41:
+    no shim can straddle "returns a tuple" and "returns a Tree", and none is
+    needed -- `Tree` defines neither `__iter__` nor `__getitem__`, so a
+    stale `tree, order = sort_tree(t)` raises `TypeError: cannot unpack
+    non-iterable Tree object` immediately, at the call site. That is checked
+    by a test, as is a static `ast` sweep asserting no source file unpacks
+    these without asking (it would catch a stale call in a module no test
+    imports).
+43. **`sub_tree` returns `(mask, tree)` by default**, with
+    `with_tree=False` to skip building the extracted Tree. Reason: the
+    subtree is half of what the function is *for*, and the performance
+    objection raised while planning turned out to be overstated -- measured,
+    eager extraction costs 1.3x per call (2203 vs 1682 us on a 3765-node
+    cell), and only `asym_tree` still calls it in a loop (34 times there),
+    which passes `with_tree=False`. An earlier docstring claimed
+    `repair_tree` and `clean_tree` also called it in a loop; they no longer
+    do, and that claim has been corrected.
+44. **`sub_tree`'s extracted subtree trims `rnames` to the regions actually
+    present**, reindexing `R` to match. Reason: MATLAB does *not* --
+    `sub_tree.m` carries the comment "NOTE ! region update for tree output
+    still missing!!!" -- and being told a purely dendritic branch still has
+    an `axon` region is useless. A deliberate improvement on the original,
+    not a porting divergence.
+45. **v7.3 (HDF5) `.mat`/`.mtr` reading, via `mat73`.** Reason: MATLAB's own
+    `save_tree.m` writes `'-v7.3'` **unconditionally**, so every `.mtr` a
+    current TREES install produces was unreadable. Not an edge case -- the
+    default path, and the crux of MATLAB/Python interoperability.
+    The library was chosen by **measurement, not documentation**, against
+    the three real v7.3 files in `Active GC Model/morphos/`:
+    `scipy.io` and `hdf5storage` raise on both layouts; `pymatreader` reads
+    the flat cell array but returns **raw, undereferenced `h5py.Reference`
+    objects** for the nested one; only `mat73` reads both. The nested layout
+    is not obscure -- it is `load_tree.m`'s documented 2-level `cgui_tree`
+    form, and two of the three files use it. Choosing `pymatreader` from its
+    docs (it returns exactly scipy's shape, which is tempting) would have
+    shipped a silent failure.
+    Also established: **Octave cannot read these files either** (`load`
+    warns "can't read 'tree' (unknown datatype)"), so there is no
+    re-save-as-v5 escape hatch outside MATLAB.
+    `mat73` is an optional `[matlab]` extra, imported lazily.
+46. **Format is detected from the file header, not from scipy's exception
+    type.** Reason: scipy raises `NotImplementedError` for most v7.3 files
+    but `ValueError: embedded null character` for `0dplaxonFitsoma.mtr`,
+    having got far enough into the HDF5 bytes to misparse them as a v5
+    structure. The 128-byte MATLAB text header ("MATLAB 7.3 MAT-file") is
+    unambiguous; the exception type is not.
+47. **`_flatten` accepts `scipy.io.matlab.mat_struct`, not just
+    `dict`/`list`/`ndarray`.** Reason: at certain nesting depths scipy
+    returns `mat_struct` **even with `simplify_cells=True`**. Without this,
+    `load_mtr` could not read `dLPTCs.mtr` at all -- the bundled 55-tree,
+    5-group population, which is precisely the fixture `stats_tree`'s
+    group-comparison API exists to consume.
+48. **`Tree.root` is a public property; the root is never index 0.**
+    Reason: Design Decision #10 established row-sum root detection, but was
+    *phrased* as a Phase-2 report ("every Phase 2 function uses it"), so by
+    Phase 5/6 it read as history rather than a live invariant -- and
+    `_root_index` was module-private in `graphtheory`, so reaching it from
+    `metrics`/`construct` meant a cross-module private import. The path of
+    least resistance was `tree.X[0]`, and three functions took it:
+    `scale_tree` (scaled about the wrong point), `flip_tree` (mirrored about
+    the wrong point) and `cap_tree` (capped the wrong end). All three were
+    faithful transliterations -- MATLAB hardcodes `tree.X(1)` in exactly
+    these three files -- so the port inherited the assumption rather than
+    inventing it. All fixed, and a shuffled-root tree added to the tests so
+    the next violation fails a test rather than a review.
+49. **`Tree.total_length`/`total_surface`/`total_volume` properties**,
+    replacing `sum(len_tree(tree))`. Uncached, deliberately: `Tree` is
+    mutable in place (`tree.X[5] = ...` is legal and used by the editing
+    functions), so a cache would go stale silently.
+50. **`Pvec_tree`'s `v` defaults to `len_tree`**, giving metric path length
+    from the root. Reason: six call sites inside the toolbox alone spelled
+    out `Pvec_tree(tree, len_tree(tree))`. Purely additive.
+51. **`insert_tree` validates parent indices and can return the new node
+    indices** (`full_output=True`). New nodes parenting *earlier* new nodes
+    was always supported -- `cap_tree` depends on it, chaining cap segments
+    -- but was undocumented and unvalidated, so a forward reference silently
+    produced a cycle or an orphan. Now documented, with an example, and
+    rejected with a clear error. Region inheritance follows the same chain.
+52. **`sample_tree()` loads `sample.mtr`; `sample2_tree`/`hsn_tree`/
+    `hss_tree`/`dLPTCs_trees` ported alongside.** Reverses a Phase-1
+    stand-in: `.mtr` reading was deferred (#9) and `sample/swc/` holds
+    exactly one file, so `25HSS.swc` became the fixture and kept the name
+    `sample_tree`. `.mtr` support landed at #32 and the sample was never
+    revisited.
+    The substitution cost more than a node count (2252 vs MATLAB's 197).
+    `25HSS.swc` *is* the HSS cell -- same node count and same 8100.26 um
+    total length as `hss.mtr` -- but the SWC export is **X-mirrored**
+    relative to it, and SWC cannot carry region names, so `axon`/`dend`/
+    `soma` collapsed into a single region `'1'`. Region handling is exactly
+    what `dissect_tree`, `stats_tree` and the NEURON bridge exercise, so the
+    default sample exercised none of it. This is also the root cause of a
+    documentation correction recorded under #39 ("`sample_tree`'s region is
+    `'1'` not `'dend'`") -- a symptom, not an isolated slip.
+    Nothing was lost: that tree is now `hss_tree()`, in regioned `.mtr`
+    form. Side benefit: the smaller default sample cut the test suite's
+    BLAS-bound `sse_tree` inversions and kept total runtime at ~14 s.
+    `dLPTCs` group names come from the **longest common prefix** of each
+    group's tree names, not the leading alphabetic run: the groups are
+    `dvs2`/`dvs3`/`dvs4`, which share the alphabetic prefix `dvs` and differ
+    only by the following digit. Stripping digits silently merged three
+    groups into one and lost 20 of the 55 trees.
+53. **`load_mtr` no longer requires the variable to be called `tree`.**
+    It prefers that name, falls back to the sole tree-shaped variable, and
+    takes an explicit `variable=` for the ambiguous case (listing the
+    candidates in the error). Reason: a `.mtr` is just a MATLAB workspace;
+    the old check rejected anything saved by hand or by T2N, which commonly
+    stores `tree` alongside other variables.
+
+### 2026-08-18 — W3 (silent gaps), continued
+
+54. **`resample_tree(method='matlab')` ported and made the default**,
+    superseding #23/#45. Verified **differentially against the MATLAB
+    source** (`edit/resample_tree.m` run in Octave 11 on the 197-node
+    `sample_tree`), across five option combinations:
+
+    | case | MATLAB | pytrees |
+    |---|---|---|
+    | default, sr=10 | 78 nodes, 724.5606 um | identical |
+    | sr=5 | 155 nodes, 753.8981 um | identical |
+    | `-d` interp. diameters | 78 nodes | identical |
+    | `-l` length conservation | 78 nodes, 770.0000 um | identical |
+    | `-v` no collapse | 91 nodes, 821.6374 um | identical |
+
+    Coordinates agree to **4.3e-14**, diameters to **6.7e-16**.
+
+    Two things this pinned down that reading the source did not:
+    - **The collapse tie-break.** When two collapse candidates have equally
+      large subtrees, which survives is invisible in the geometry (both are
+      moved to their midpoint first) but visible in the diameters. Keeping
+      the *first* daughter matches; the opposite choice reproduced
+      everything else exactly and left ~7 of 78 diameters differing by up to
+      0.023 um. Found by bisecting on `-d -v` vs `-d`, not by reading
+      MATLAB's `min(child(itodel))` indexing -- which is genuinely hard to
+      read, since the orientation of `collab`'s entries decides whether
+      `min` runs column-wise or over the whole array.
+    - **Resampled segments are *shorter* than `sr`, not equal to it.**
+      Grid points are placed at multiples of `sr` along the *original*
+      path; deleting the intermediate nodes then replaces each polyline
+      with a chord. MATLAB's source says so at the `'-l'` branch ("we cut
+      the paths short"), and `conserve_length` exists precisely to undo it.
+      An earlier version of the new test asserted exact grid multiples --
+      i.e. asserted a property the algorithm does not have.
+
+    `method='anchors'` (the previous behaviour, branch/termination points
+    preserved exactly) remains available and is still the right choice when
+    branch-point positions matter, as in the NEURON bridge.
+55. **`plot_tree`'s `color` is polymorphic again, and the positional order
+    matches MATLAB** (`intree, color, DD, ipart, res`). Reason: `color=` and
+    `scalars=` were two parameters where one was always `None`, and the
+    merged form is what a MATLAB user types anyway. Everything this port
+    adds beyond MATLAB's five arguments is **keyword-only**, which is what
+    keeps the order matched -- a future addition cannot wedge itself into a
+    positional slot.
+    The one genuine ambiguity is a 3-node tree, where a length-3 vector
+    could be an RGB triple or three per-node values; read as RGB, matching
+    MATLAB, with `scalars=` as the explicit override. `scalars=` is retained
+    as a keyword, so every existing call site kept working unchanged.
+    **Not reproduced**: MATLAB's `'-b'` flat-patch mode exists to dodge the
+    cost of real cylinders in MATLAB's renderer, which `mode='tube'` does
+    not have; and `'-2q'`/`'-3q'` quiver plots of a 4000-segment tree are
+    unreadable. `'-2l'`/`'-3l'` map onto `mode='line'`.
+57. **`ipar_tree(terminals_only=)`, `dissect_tree(with_positions=)` and
+    `soma_tree(overlap_correction=)` ported** -- MATLAB's `'-T'`, second
+    output, and `'-b'`.
+    - `terminals_only` returns one row per termination point, each the
+      unbranched run back to (excluding) its first branch point, with the
+      all-padding tail trimmed. That trim is the point: 2.3 MB -> 0.08 MB on
+      the HSS cell, a 28x reduction, while every one of the 26 paths matches
+      MATLAB exactly.
+    - `with_positions` adds MATLAB's per-node `(section index, fraction
+      along that section)` -- precisely NEURON's `sec(x)` addressing. A
+      branch point starts two sections and ends one; it belongs to the one
+      it **ends**, at fraction 1.0. Getting that backwards lets the later
+      assignment silently overwrite the earlier, which is what a first
+      version did (and what a first version of the *test* wrongly asserted).
+      MATLAB draws the same line, by assigning `DEC(1:end-1)`.
+    - `overlap_correction` divides diameters by `sqrt(2)` per branch point
+      already passed, so two cylinders meeting at a branch stop
+      double-counting shared membrane. On `hss_tree` at `maxD=120` this cuts
+      total surface by 46%; on `sample_tree` at `maxD=30` it correctly does
+      nothing, since no branch point inside the soma profile has been passed
+      yet.
+
+    **Three MATLAB bugs found while doing this** (all reproduced in Octave,
+    now in `MATLAB_TOOLBOX_BUGS.md`):
+    - `soma_tree(..., '-b')` **crashes** on any tree whose root has a single
+      child -- including the toolbox's own `sample_tree`. Its guard is
+      `if 1 < numel(idchild_tree(tree, 1))`, but `idchild_tree` returns a
+      fixed-width NaN-padded matrix, so `numel` is 2 even for one child and
+      the next line evaluates `dr(NaN, :)`. There is therefore no MATLAB
+      reference for this option; the port is checked against the physical
+      property instead. This port's `idchild_tree` already sizes its output
+      to the widest node found rather than hardcoding 2, so it cannot
+      reproduce the cause.
+    - `ipar_tree`'s `'-T'` is **unreachable by its documented call**: the
+      docstring shows options third, but `parseArgs` registers only `ipart`
+      as positional, so `ipar_tree(tree, '-T')` binds `'-T'` to `ipart` and
+      returns a 2x27 matrix of nonsense instead of 26x37. `'T', true` works.
+      A real keyword makes this unrepresentable here.
+    - `dissect_tree`'s second output inherits the root handling its own
+      docstring disclaims ("isn't completely correct yet at the root"):
+      MATLAB prepends a fake root, slices it back off with `vec(3:end,:)`,
+      then patches `vec(1,2) = 0`. The port computes positions from its
+      already-root-clean sections, so none of that is needed.
+58. **`MST_tree`'s remaining MATLAB options ported**: competitive multi-tree
+    growth, the `DIST` cost term, grow-from-cut-ends, time-lapse recording,
+    and the `indx` second output. `full_output=False` per #42, so the bare
+    call now returns the tree (or a list, for several start points) rather
+    than `(tree, connected)`.
+    - **Multi-tree growth** is the one that mattered most: it is how the
+      published construction is normally used -- several cells grown into
+      one shared point cloud, each bidding for every point, so territories
+      emerge from the competition instead of being assigned. The heap
+      formulation generalised directly: seed from every start and tag each
+      candidate with its owning tree.
+    - **`dist`** is indexed over the **input points only**. MATLAB requires
+      the caller to index it over the growing trees' own nodes as well
+      ("Don't forget to include input tree nodes into the distance matrix
+      DIST!"), which is easy to get wrong and impossible to validate. Note
+      its values are in *distance units*: the penalty spans `0..max(dist)`,
+      so a preference of 1.0 against 10 um spacings is correctly ignored.
+    - **`record`** returns the growth **log** (`[tree, point, parent]` per
+      attachment), not MATLAB's list of intermediate trees. Every
+      intermediate state is a prefix of the log, so storing whole trees per
+      step would be quadratic in memory for information already there.
+59. **B1 landed: `hull_tree`, `gdens_tree`, `lego_tree`, `vhull_tree` and
+    `share_boundary_tree`**, in a new `density.py`. One module rather than
+    five scattered functions because they share two primitives -- bin a tree
+    into voxels, and measure distance from arbitrary points to it -- and
+    splitting them would have meant writing the second one three times.
+    - **Distance is to the nearest segment, not the nearest node.** This is
+      why it is not a `cKDTree` query: measuring to nodes would make a
+      hull's shape depend on how finely the morphology happened to be
+      sampled. MATLAB makes the same choice.
+    - `hull_tree` gives the **space-filling** hull -- the surface at `thr`
+      um from the arbor, following its concavities -- as opposed to
+      `chull_tree`'s convex hull. On the sample tree at `thr=5` the
+      space-filling hull occupies **39.5%** of the convex hull's volume,
+      which is the difference between "the volume a cell spans" and "the
+      volume it occupies".
+    - `gdens_tree` is indexed `[x, y, z]`; MATLAB's is `[y, x, z]`, its
+      image convention. Transposed deliberately: every other array in this
+      port is `[x, y, z]`, and mixing the two silently is how axis bugs
+      happen.
+    - `vhull_tree` returns **NaN** for unbounded Voronoi cells rather than
+      dropping them as MATLAB does. Dropping biases any mean over the
+      result, because the outermost nodes are exactly the ones with the
+      largest territories.
+    - **`stats_tree`'s `parea`/`mparea` now work** -- the density statistics
+      deferred since Phase 7 for want of these two functions. `mparea` is
+      verified to equal `mean(parea)` exactly.
+    - No MATLAB diff is possible for the hull itself: marching cubes
+      produces a mesh whose vertex count and ordering are implementation
+      details, so matching vertex-for-vertex would be matching an artefact.
+      Tested against the properties the geometry must have instead --
+      monotone growth in `thr`, containment of every node, zero overlap
+      between distant trees, decreasing overlap with separation.
+    - **Performance/precision trade, stated because it is a real one:**
+      `_segment_distance` expands the squared distance rather than forming
+      an explicit closest point, dropping the `(P, N, 3)` intermediates and
+      landing the work in BLAS. About 3x faster and far lighter on memory,
+      but it is the numerically unstable expansion: a distance that should
+      be exactly zero returns ~`|coords| * sqrt(eps)`, measured at 2e-6 um.
+      That is picometres against a 0.1 um reconstruction precision. The
+      test asserts the bound rather than exact zero, and says why.
+    - New optional dependency: `scikit-image` (marching cubes) under the
+      `[plot]` extra. 2D contours need only matplotlib.
+60. **B2 (part): `M_atten_tree`, `angleBd_tree`/`angleBd2_tree`,
+    `boundary_tree`, `convexity_tree`.**
+    - **`M_atten_tree` closes `electrotonics`** -- it was the only unported
+      function in an otherwise complete folder. **MATLAB ships it with no
+      documentation whatsoever**: no header comment, no description of the
+      return value, and a stray `clf;` (clear-figure) left mid-computation.
+      The docstring here is derived from reading what the code does: it
+      counts how many electrotonically distinct compartments a tree breaks
+      into at a coupling threshold. The `clf` is deliberately not
+      reproduced -- a metrics function must not wipe the caller's figure.
+    - **`angleBd_tree`/`angleBd2_tree`** measure branch angle `dist` nodes
+      out rather than at the immediate daughters, so a single jittered
+      reconstruction point cannot swing the result. The two differ in which
+      branch they follow at an intervening branch point: the bulkier
+      subtree, or the one reaching furthest. That distinction is real --
+      they disagree at up to 90 of 223 branch points on `hsn_tree`, by as
+      much as 81.5 degrees -- but **identical on `sample_tree`**, which is
+      too small for the two rules ever to diverge. Both facts are pinned by
+      tests, so neither looks like a bug later.
+    - **`boundary_tree` and `convexity_tree` could not be verified against
+      MATLAB.** Both rest on MATLAB's built-in `boundary()`, which Octave
+      does not implement (`exist('boundary') == 0`), so the differential
+      approach used everywhere else in W3 was unavailable. They are tested
+      against geometric properties instead, and the docstrings say so
+      rather than implying a fidelity that was not established.
+    - `boundary_tree` interpolates between the convex hull (`shrink=0`) and
+      the tightest alpha shape that still **envelops** every point
+      (`shrink=1`), which is what MathWorks documents those endpoints to
+      mean. A plain quantile cutoff -- the obvious first implementation --
+      abandons most of the tree well before `shrink` reaches 1: it returned
+      a 4-vertex sliver of a 197-node cell.
+    - **`convexity_tree` deliberately does not follow MATLAB.** MATLAB tests
+      visibility against `boundary(X, Y, Z, 0)`, and a shrink factor of 0
+      is documented as the *convex hull* -- against which every segment
+      between interior points is inside by definition, making the measure
+      degenerate. This version tests against the space-filling hull from
+      B1, the standard definition, which actually separates a compact arbor
+      from a lobed one: on the sample tree it runs 0.60 at `thr=10` up to
+      1.00 at `thr=60`. **Upgraded from "suspect" to confirmed in B2's
+      second half** -- see #61; reading `convexity_tree.m` closely enough to
+      port `dissectSholl_tree` showed its 3D branch also returns the
+      *complement* of what its own 2D branch returns, which is a textual
+      fact about the file and needs no execution to establish.
+
+    Deliberately skipped from B2, per the "cleaner in Python" rule:
+    `tlen_tree` (superseded by `Tree.total_length`) and `dstats_tree`'s
+    display layer (superseded by returning DataFrames plus matplotlib).
+61. **B2 (rest): `r_mc_tree`, `dissectSholl_tree`, and the `boundary_tree`
+    rework they forced.** This closes B2 and, with it, every function in
+    `treestoolbox-master/metrics/`.
+    - **`boundary_tree` gained a real return type and a MATLAB-compatible
+      knob.** Porting the two consumers showed the old `(vertices,
+      simplices)` tuple was missing everything they needed: the enclosed
+      volume, the filled simplices, and -- in 2D -- an *ordered* polygon
+      rather than a bag of edges. It now returns a `Boundary` NamedTuple
+      carrying all of it. It also accepts MATLAB's parameterisation, `c=`
+      (convexity), which sets `shrink = 1 - c`; `shrink=` remains available
+      because "how tight is the wrap" is the thing the algorithm actually
+      takes, and hiding it behind a derived quantity helps nobody.
+    - **The shrink family is interpolated by rank, not by radius.** The
+      first version moved the circumradius cutoff linearly between the two
+      documented endpoints. The circumradii are heavily skewed -- a few
+      slivers spanning the arbor's concavities are orders of magnitude
+      larger than the rest -- so on `sample_tree` the enclosed volume sat
+      at 138871 um^3 for every shrink from 0 to 0.5 and only collapsed past
+      0.9: most of the dial did nothing. Walking the *sorted* radii instead
+      gives 138881 / 106942 / 76717 / 61250 / 50294 across shrink 0 to 1,
+      and still hits both documented endpoints exactly. A test now asserts
+      each quarter-turn moves the shape by at least 5%.
+    - **`r_mc_tree` samples exactly instead of rejecting.** MATLAB fills the
+      bounding box uniformly and discards everything outside the boundary,
+      testing each candidate with a vendored point-in-polyhedron routine --
+      for a thin arbor in a large box, most of every batch. Drawing from
+      the boundary's own simplex decomposition weighted by simplex volume
+      gives the identical uniform distribution with no rejection loop and
+      no vendored code. Verified directly: 40000 draws from a unit cube
+      land at mean 0.5 per axis with each octant holding 12.5% +/- 1%.
+    - **`r_mc_tree`'s volume correction follows the docs, not the code.**
+      MATLAB documents `-nv` as "no volume correction" and states the
+      correction is on by default, but writes `if pars.nv % volume
+      correction` -- so the flag inverts and the documented default never
+      happens. This port takes the documented intent: `volume_correction`
+      defaults to `True`. It matters -- R = 0.567 with, 0.621 without, on
+      `sample_tree`. MATLAB_TOOLBOX_BUGS.md.
+    - **`dissectSholl_tree` casts each ray once instead of per radius.**
+      MATLAB tests a million random points *per radius* for containment in
+      the boundary mesh -- 25 million point-in-mesh tests per call, through
+      a vendored `intriangulation`/`voxelise` pair. But every one of those
+      points lies on a ray from the root, differing only in how far along
+      it sits. Casting each ray once (Moeller-Trumbore), recording every
+      surface crossing, and reading containment off the crossing parity
+      gives the same estimator at all 25 radii in one pass. The whole 3D
+      dissection runs in 0.3 s on `sample_tree`.
+    - **MATLAB's 500 um fudge is reproduced but exposed.** Its 3D branch
+      silently doubles the estimated mean branch length for cells reaching
+      past 500 um, with no comment, no docstring mention, and no 2D
+      counterpart. Kept for fidelity -- changing it would move published
+      numbers silently -- but surfaced as `scale_factor=`, which `1.0`
+      disables. Same treatment for its 2D-only first-bin extrapolation of
+      the root-angle histogram, reproduced and documented rather than
+      quietly harmonised.
+    - **Neither is verifiable against MATLAB, and the tests say so.** Both
+      bottom out in `boundary()`, absent from Octave. `r_mc_tree` is
+      instead pinned against point sets with answers known independently of
+      any implementation -- a uniform cloud must score R = 1 (measured
+      1.00 +/- 0.12), a lattice near 2 (measured > 1.6) -- which is a
+      stronger check than a diff against one implementation would have
+      been. `dissectSholl_tree` is pinned on the invariants its profiles
+      must satisfy (unit integrals, radii spanning the cell, the domain
+      profile vanishing outside the territory) plus agreement with the
+      already-verified `sholl_tree` on `scale`.
+    - **A biologically meaningful sanity check fell out for free**, and is
+      kept as a test: on `sample_tree`, all nodes score R = 0.57 (strongly
+      clustered -- that is the reconstruction's sampling, not the cell),
+      while termination points alone score 1.33, i.e. spread more regularly
+      than chance. That is the measurement the function exists to make.
+    - **`bf_tree(params=)` renamed to `fit_constants=`** (REVIEW_PLAN S3,
+      the last outstanding item from it). The argument holds the three
+      published constants of the Bird & Cuntz 2019 k->bf relationship, not
+      data; `params` read like the latter. Old spelling warns.
+    - Housekeeping: `np.trapezoid` (numpy >= 2.0 only) replaced throughout
+      `stats.py` by `scipy.integrate.trapezoid`, which works on the
+      `numpy>=1.24` the package actually declares. That mismatch was
+      already live in `vonMises_tree`.
+62. **B3: file formats — the `.neu` reader, `.nmf`, the `.mtr` writer, the
+    NEURON and NeuroML exporters, and the `load_tree`/`save_tree`
+    dispatcher.** This closes `treestoolbox-master/IO/` apart from
+    `pov_tree` and `x3d_tree`, which the Blender work supersedes.
+    - **MATLAB interoperability now runs both ways, and is verified.** A
+      `.mtr` written by `save_tree` here loads through MATLAB's own
+      `load_tree` under Octave, and `len_tree`, `B_tree`, `T_tree` and
+      `PL_tree` run on the result with values matching Python to every
+      digit printed (total length 765.152557, 25 branch points, 26
+      terminals, max path length 35). A list of trees round-trips as a
+      MATLAB cell array. This was the stated point of the v7.3 reader work
+      in #47; the writer completes it.
+    - **`save_mtr` writes v5, not v7.3**, though MATLAB's `save_tree` forces
+      `-v7.3`. MATLAB's `load_tree` calls plain `load`, which reads either,
+      so nothing on the MATLAB side can tell. Writing a MATLAB *struct*
+      into v7.3 by hand means reproducing undocumented `MATLAB_class`
+      attributes and object references — reimplementing a format MATLAB has
+      never specified — whereas `scipy.io.savemat` is a maintained, tested
+      writer for a format MATLAB *has* documented for decades. The only
+      real v5 limit, 2 GB per variable, is orders of magnitude past any
+      morphology.
+    - **The `.neu` reader is the rare case in this cluster that *could* be
+      diffed against MATLAB.** Octave's `textscan` does not behave like
+      MATLAB's, so `load_tree.m` will not run there; the file parsing was
+      rewritten in plain Octave and everything from `d = zeros (nsec, 1)`
+      onward copied verbatim, so the arithmetic under test is MATLAB's.
+      Parent indices came back **bit-identical** and geometry identical to
+      0.0 on all three shipped fixtures.
+    - That harness also showed **MATLAB's `.neu` reader crashes on
+      `GC1.neu`**, one of the three fixtures the toolbox ships for it: the
+      file's root section is tenth of sixty, so the root is node 306, and
+      the reader's `for counter = 2 : N` loop assumes it is node 1. The
+      port finds roots wherever they sit and splits the forest on them.
+      MATLAB_TOOLBOX_BUGS.md.
+    - **`.neu` region names diverge deliberately.** MATLAB truncates a
+      section name at its first `[`, which turns `GCT.neu`'s ninety
+      sections — `GC7[0].adendGCL[3]`, `GC7[0].soma[0]`, ... — into one
+      region called `GC7[]`. Blanking each bracket in place instead gives 7
+      anatomically meaningful regions and is identical to MATLAB on the
+      simple names in the other two fixtures. The divergence is a fix for
+      an unintended vector-index truncation, not a preference.
+    - **`load_tree` is now a dispatcher** over `.npz`, `.mtr`/`.mat`,
+      `.swc`, `.neu`, `.nmf` and `.asc`, with `save_tree` covering the
+      writable subset plus the export-only `.hoc`, `.nrn` and `.xml`. Two
+      things MATLAB's version does are deliberately not carried over: it
+      **opens a file dialog** when called with no argument (fine for a
+      GUI-first toolbox, unusable from a script, a headless notebook or a
+      test), and it **silently applies `repair_tree`** to `.swc`/`.neu`/
+      `.nmf`. Loading and repairing are kept apart so that "what does this
+      file contain" has an answer. `save_tree` returns the path it actually
+      wrote, since the extension is appended when missing.
+    - **`.nmf` keeps region names, where MATLAB loses them.** Its writer
+      stores only `tree.R`, the region indices, so a round trip renames
+      `dendrite`/`subtree` to `1`/`2`. Here the names go into an HDF5 group
+      *attribute*, which MATLAB's reader ignores — it iterates datasets —
+      so the file stays readable there while round-tripping losslessly
+      here.
+    - **NEURON export is one module with three shapes**: `save_hoc(...,
+      style="cell")` for MATLAB's `neuron_tree`, `style="template"` for
+      `neuron_template_tree`, and `save_nrn` for the per-segment `.nrn`
+      form. `neuron_bridge` is still the better route when NEURON is
+      importable; these are for handing a cell to something outside Python.
+    - **MATLAB's `.nrn` branch cannot run at all**, in two independent
+      ways, both fixed: its single-region path reads a loop variable that
+      is only assigned in the *other* branch of the `if`, and its `'-e'`
+      block reads `tree.ri`/`tree.rm`/`tree.cm`, which the tree structure
+      spells `Ri`/`Gm`/`Cm`. So there was no reference output to diff
+      against for that format; it is tested against the structure
+      `geometry()` requires — nine numbers per section, `create` sizes
+      summing to the node count.
+    - **Region names are sanitised into valid hoc identifiers in both hoc
+      styles.** MATLAB does this only in `neuron_template_tree`;
+      `neuron_tree` interpolates `[name '_' rnames{i}]` directly, so a
+      region called `basal dendrite` writes hoc that will not parse. Names
+      that *collide* once sanitised now raise, rather than silently merging
+      two regions into one.
+    - **`minterf` is a function, not a second return value.** MATLAB
+      returns the T2N interface matrix as `neuron_template_tree`'s third
+      output. Here it is `t2n_interface(tree)`, because it is a computation
+      about the tree rather than a detail of writing a file, and a caller
+      normally wants one or the other. It shares the section layout with
+      the writer, and a test asserts it has exactly one row per `pt3dadd`
+      the file contains.
+    - **The hoc writer controls its own line endings.** MATLAB emits CR+LF
+      explicitly; `Path.write_text` on Windows then translates the `\n` of
+      an already-CRLF line into `\r\r\n`, giving NEURON a blank line
+      between every statement. Written through an explicit
+      `open(..., newline="")`, and asserted at byte level.
+    - **NeuroML is built with `ElementTree`, not string concatenation.**
+      Not a style preference: MATLAB's string building writes an unparseable
+      document the moment a region name contains `&` or `"`, which a test
+      now exercises. Three of its outputs are also wrong and are fixed —
+      a `schemaLocation` concatenated into one token where the attribute
+      needs two, root segments rewritten to be children of segment 0, and
+      mixed CR+LF / LF line endings. One `<segmentGroup>` per region is
+      **added**: MATLAB writes none, so its export cannot say which cable
+      is axon and which is dendrite.
+    - Segment ids are the distal node's index rather than MATLAB's
+      `node - 2`, whose 1-based arithmetic yields id `-1` on any tree whose
+      root is not node 1 — which its own `.neu` reader produces.
+    - New optional dependency: `h5py` for `.nmf`, under a `[nmf]` extra. It
+      already arrives with `[matlab]` (mat73 depends on it); the separate
+      extra exists so that "I want `.nmf`" does not read as "I want MATLAB
+      support".

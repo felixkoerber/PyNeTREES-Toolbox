@@ -44,7 +44,7 @@ This is not an exotic input:
   failed on any flat morphology**.
 
 Now returns `(points, None)`, matching the documented "no hull possible"
-contract, and the docstring points at `dim2=True` (the 2D hull, which is what
+contract, and the docstring points at `dim=2` (the 2D hull, which is what
 you actually want there).
 
 ### 1.3 `resample_tree` failed on a single-node tree
@@ -182,3 +182,32 @@ Suite: **222 passing**, down from ~31 s to ~14 s.
 | `quaddiameter_tree` 1.7× superlinear | Not investigated |
 | `sse_tree()` full inverse | O(n²) memory by definition; pass `I=node` for one site |
 | Single-node trees in `sse_tree`/`M_tree` | Return non-finite values rather than raising |
+
+---
+
+## 7. Follow-up (2026-08-18): review response
+
+The function-by-function review in [`../REVIEW_PLAN.md`](../REVIEW_PLAN.md)
+picked up where this audit left off. Items from §6 above that it resolved:
+
+- **`chull_tree`'s 2D branch drew nothing.** §1.2 fixed the *crash* on planar
+  trees but left a second bug in place: with `dim=2` the hull was computed
+  and then silently discarded, because the drawing code was guarded by
+  `plotter is not None and not dim2`. It now draws a closed polyline to a
+  matplotlib Axes (a 2D hull on a 3D PyVista scene being the wrong pairing).
+- **The `sse_tree` "slow full inverse" note needs a correction.** It is not
+  the port's doing: `np.linalg.inv` on a *random* 2252x2252 matrix takes the
+  same ~6 s on this machine. OpenBLAS is running effectively single-threaded
+  here (~6.5 GFLOP/s across 12 cores), so the fix is a threading/BLAS
+  configuration one, not an algorithmic one.
+
+And three things this audit did not look for, which the review found:
+
+- `sub_tree`'s extracted subtree kept the parent's full region list --
+  MATLAB's own acknowledged gap, inherited.
+- `scale_tree`, `flip_tree` and `cap_tree` assumed the root was node 0,
+  violating Design Decision #10. All three were faithful transliterations of
+  MATLAB, which hardcodes `tree.X(1)` in exactly those three files.
+- `load_mtr` could not read **any** MATLAB v7.3 file -- i.e. anything a
+  current TREES install saves -- nor `dLPTCs.mtr`, the bundled population
+  fixture `stats_tree` was built for.

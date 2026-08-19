@@ -21,11 +21,11 @@ from pytrees import (
     BO_tree,
     Tree,
     chull_tree,
-    dA_tree_mpl,
+    dA_tree,
     dendrogram_tree,
     flatten_tree,
     plot_tree,
-    plot_tree_mpl,
+    plot_mpl_tree,
     pointer_tree,
     sample_tree,
     spread_tree,
@@ -276,31 +276,31 @@ def test_spread_trees_returns_translated_trees():
 # ---------------------------------------------------------------------------
 
 
-def test_plot_tree_mpl_true_aspect_ratio():
+def test_plot_mpl_tree_true_aspect_ratio():
     # matplotlib's `get_box_aspect()` returns internally re-normalized
     # values (not the raw spans passed to `set_box_aspect`), so what's
     # checked here is that the *proportions* between axes are preserved
     # (the actual fix for matplotlib's default aspect-ratio distortion),
     # not the literal numbers.
     tree = _small_geom_tree()  # X span 6, Y span 4, Z span 0
-    ax = plot_tree_mpl(tree)
+    ax = plot_mpl_tree(tree)
     box = ax.get_box_aspect()
     assert box[0] / box[1] == pytest.approx(6.0 / 4.0, rel=1e-3)
     assert box[2] < box[1] * 1e-3  # Z span is ~0: must stay negligible
     plt.close(ax.figure)
 
 
-def test_plot_tree_mpl_scalars_coloring_runs():
+def test_plot_mpl_tree_scalars_coloring_runs():
     tree = sample_tree()
     bo = BO_tree(tree)
-    ax = plot_tree_mpl(tree, scalars=bo, cmap="viridis")
+    ax = plot_mpl_tree(tree, scalars=bo, cmap="viridis")
     assert len(ax.collections) == 1
     plt.close(ax.figure)
 
 
-def test_dA_tree_mpl_runs():
+def test_dA_tree_runs():
     tree = sample_tree()
-    ax = dA_tree_mpl(tree)
+    ax = dA_tree(tree)
     assert ax.get_xlabel() == "parent"
     plt.close(ax.figure)
 
@@ -322,7 +322,7 @@ def test_chull_tree_returns_none_for_planar_points_instead_of_raising():
 def test_chull_tree_2d_hull_works_on_a_planar_tree():
     # ...and the 2-D hull, which is what you actually want there, still does
     tree = flatten_tree(sample_tree())
-    pts, hull = chull_tree(tree, dim2=True)
+    pts, hull = chull_tree(tree, dim=2)
     assert hull is not None
     assert hull.volume > 0      # enclosed area in 2-D
 

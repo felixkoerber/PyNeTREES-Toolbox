@@ -29,7 +29,10 @@ length `n_nodes` unless noted, and never plot as a side effect. See
 | `load_mtr` | MATLAB `.mtr` archives (v5) |
 | `load_neurolucida` | NeuroLucida `.ASC` |
 | `load_tree` / `save_tree` | Native `.npz` — lossless round-trip |
-| `sample_tree()` | Bundled 2252-node reconstruction, for examples/tests |
+| `sample_tree()` | MATLAB's sample: 197-node subtree of an HSN cell |
+| `sample2_tree()` | 15-node minimal tree, for doctests |
+| `hsn_tree()` / `hss_tree()` | Full HSN (1290) / HSS (2252) cells |
+| `dLPTCs_trees()` | Population: 55 cells in 5 named groups |
 
 ## Topology (needs only `dA`)
 
@@ -46,12 +49,12 @@ length `n_nodes` unless noted, and never plot as a side effect. See
 | `LO_tree` | Level order |
 | `strahler_tree` | Strahler number |
 | `asym_tree` | Asymmetry at each branch point |
-| `sub_tree` | Mask of a node's whole subtree |
+| `sub_tree` | `(mask, tree)` for a node's whole subtree; `with_tree=False` for the mask alone |
 | `dissect_tree` | `(start, end)` node pairs, one per section |
 | `Pvec_tree(tree, v)` | Cumulative sum of `v` along the path to the root |
 | `ratio_tree` | Ratio of a value to its parent's |
 | `rindex_tree` | Rank of each node within its region |
-| `sort_tree` | Canonical node ordering (`by="hier"/"lo"/"lex"`) |
+| `sort_tree` | Canonical node ordering (`by="hier"/"lo"/"lex"`); `full_output=True` also returns the permutation |
 | `redirect_tree` | Re-root the tree |
 
 ## Geometry and metrics
@@ -99,7 +102,7 @@ length `n_nodes` unless noted, and never plot as a side effect. See
 | `soma_tree` | Add a soma |
 | `cap_tree` | Cap terminal ends |
 | `jitter_tree` | Add spatially-correlated noise |
-| `smooth_tree` / `smoothbranch` | Smooth along long paths |
+| `smooth_tree` | Smooth along long paths (helper `_smoothbranch` is private: it takes raw X/Y/Z arrays, not a Tree) |
 | `quaddiameter_tree` / `quadfit_tree` | Assign realistic tapering diameters |
 
 ## Plotting
@@ -107,11 +110,11 @@ length `n_nodes` unless noted, and never plot as a side effect. See
 | Name | Purpose |
 |---|---|
 | `plot_tree` | 3D via PyVista — `mode="tube"/"line"`, `scalars=`, `plotter=` |
-| `plot_tree_mpl` | Lighter matplotlib fallback |
+| `plot_mpl_tree` | Lighter matplotlib fallback |
 | `vtext_tree` / `pointer_tree` | Label / mark nodes on a PyVista plot |
 | `chull_tree` | Convex hull (+ optional overlay) |
 | `dendrogram_tree` / `xdend_tree` | Abstract topology diagram / its layout |
-| `dA_tree_mpl` | Adjacency-matrix sparsity plot |
+| `dA_tree` | Adjacency-matrix sparsity plot |
 | `spread_tree` / `spread_trees` | Lay several cells out on a grid |
 
 ## Electrotonics (no simulator needed)

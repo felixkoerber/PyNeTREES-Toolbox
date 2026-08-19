@@ -20,6 +20,7 @@ from scipy import sparse
 
 from pytrees.graphtheory import _subtree_blocks
 from pytrees import (
+    hss_tree,
     B_tree,
     BO_tree,
     C_tree,
@@ -90,9 +91,9 @@ def test_idpar_tree_self_referencing_root():
     np.testing.assert_array_equal(idpar_tree(tree), [0, 0, 0, 1, 1])
 
 
-def test_idpar_tree_no_self_root_is_sentinel():
+def test_idpar_tree_root_self_false_gives_sentinel():
     tree = _branchy_tree()
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
     assert idpar[0] == NO_PARENT
     np.testing.assert_array_equal(idpar[1:], [0, 0, 1, 1])
 
@@ -187,10 +188,10 @@ def test_rindex_tree_resets_per_region():
 def test_sub_tree_mask():
     tree = _branchy_tree()
     np.testing.assert_array_equal(
-        sub_tree(tree, 1), [False, True, False, True, True]
+        sub_tree(tree, 1).mask, [False, True, False, True, True]
     )
     np.testing.assert_array_equal(
-        sub_tree(tree, 0), [True, True, True, True, True]
+        sub_tree(tree, 0).mask, [True, True, True, True, True]
     )
 
 
@@ -209,7 +210,7 @@ def test_asym_tree_default_terminal_count():
 
 def test_redirect_tree_reroots_at_leaf():
     tree = _branchy_tree()
-    new_tree, order = redirect_tree(tree, 2)
+    new_tree, order = redirect_tree(tree, 2, full_output=True)
     np.testing.assert_array_equal(order, [2, 0, 1, 3, 4])
     expected = np.zeros((5, 5))
     expected[1, 0] = 1  # old root (now idx 1) parented by old node2 (now idx 0)
@@ -230,10 +231,10 @@ def test_sort_tree_hier_gives_contiguous_subtrees():
     # raw index order, so it is not itself BCT-conform (not every subtree is
     # a contiguous index range) -- sort_tree must fix that up.
     tree = _branchy_tree()
-    resorted, order = sort_tree(tree, by="hier")
+    resorted, order = sort_tree(tree, by="hier", full_output=True)
     np.testing.assert_array_equal(order, [0, 1, 3, 4, 2])
 
-    idpar = idpar_tree(resorted, no_self=True)
+    idpar = idpar_tree(resorted, root_self=False)
     assert idpar[0] == NO_PARENT
     assert np.all(idpar[1:] < np.arange(1, 5))  # parent always precedes child
 
@@ -245,9 +246,9 @@ def test_sort_tree_recovers_valid_order_from_shuffled_tree():
     shuffled = tree.reindexed(shuffle)
 
     for mode in ("hier", "lo", "lex"):
-        resorted, order = sort_tree(shuffled, by=mode)
+        resorted, order = sort_tree(shuffled, by=mode, full_output=True)
         # root must come first, and every parent must precede its child
-        idpar = idpar_tree(resorted, no_self=True)
+        idpar = idpar_tree(resorted, root_self=False)
         assert idpar[0] == NO_PARENT
         assert np.all(idpar[1:] < np.arange(1, 5))
         # and it must be the same tree, just relabeled
@@ -259,7 +260,7 @@ def test_sort_tree_recovers_valid_order_from_shuffled_tree():
 def test_sort_tree_runs_on_sample_tree():
     tree = sample_tree()
     for mode in ("hier", "lo", "lex"):
-        resorted, order = sort_tree(tree, by=mode)
+        resorted, order = sort_tree(tree, by=mode, full_output=True)
         assert resorted.n_nodes == tree.n_nodes
         assert len(set(order.tolist())) == tree.n_nodes  # order is a permutation
 
@@ -378,7 +379,7 @@ def test_subtree_blocks_matches_sub_tree_on_real_reconstruction():
     nodes = [0, *rng.choice(tree.n_nodes, 60, replace=False).tolist()]
     for node in nodes:
         node = int(node)
-        expected = set(np.flatnonzero(sub_tree(tree, node)).tolist())
+        expected = set(np.flatnonzero(sub_tree(tree, node).mask).tolist())
         got = set(order[start[node] : start[node] + size[node]].tolist())
         assert got == expected, f"node {node}"
 
@@ -389,7 +390,7 @@ def test_subtree_blocks_sizes_are_globally_consistent():
     # children's sizes, and each block must start with the node itself.
     tree = sample_tree()
     order, start, size = _subtree_blocks(tree.dA)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
     counted = np.ones(tree.n_nodes, dtype=int)
     for node in order[::-1]:
         parent = idpar[node]
@@ -428,7 +429,7 @@ def test_subtree_blocks_leaf_is_just_itself():
 def test_PL_tree_equals_depth_walked_through_parents():
     tree = sample_tree()
     PL = PL_tree(tree)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
     for node in range(0, tree.n_nodes, 37):      # sample for speed
         depth, cur = 0, node
         while idpar[cur] != NO_PARENT:
@@ -466,7 +467,7 @@ def test_Pvec_tree_matches_explicit_ancestor_walk():
     tree = sample_tree()
     v = len_tree(tree)
     P = Pvec_tree(tree, v)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
     for node in range(0, tree.n_nodes, 53):
         total, cur = 0.0, node
         while cur != NO_PARENT:
@@ -484,10 +485,10 @@ def test_Pvec_tree_with_ones_is_depth_plus_one():
 
 def test_sub_tree_is_consistent_with_parent_chain():
     # a node is in sub_tree(inode) iff inode lies on its path to the root
-    tree = sample_tree()
-    idpar = idpar_tree(tree, no_self=True)
+    tree = hss_tree()  # the big sample: enough depth to make this meaningful
+    idpar = idpar_tree(tree, root_self=False)
     for inode in (0, 17, 400, 1500):
-        mask = sub_tree(tree, inode)
+        mask = sub_tree(tree, inode).mask
         for node in range(0, tree.n_nodes, 101):
             cur, found = node, False
             while cur != NO_PARENT:
@@ -500,4 +501,4 @@ def test_sub_tree_is_consistent_with_parent_chain():
 
 def test_sub_tree_of_root_is_everything():
     tree = sample_tree()
-    assert sub_tree(tree, 0).all()
+    assert sub_tree(tree, 0).mask.all()

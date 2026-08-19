@@ -86,7 +86,7 @@ def test_load_neurolucida_synthetic_topology_and_regions(tmp_path):
 
     # branch point is node 1 (path length 10 along X); its two children
     # should be the (20, 5, 0) and (20, -5, 0) points
-    idpar = idpar_tree(dend, no_self=True)
+    idpar = idpar_tree(dend, root_self=False)
     branch_node = int(np.flatnonzero(B_tree(dend))[0])
     assert dend.X[branch_node] == pytest.approx(10.0)
     children = np.flatnonzero(idpar == branch_node)

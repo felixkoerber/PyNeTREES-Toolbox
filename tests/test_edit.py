@@ -132,8 +132,11 @@ def test_elimt_tree_converts_trifurcation_to_two_bifurcations():
         dA=dA, X=np.array([0.0, 1.0, 2.0, 3.0]), Y=np.array([0.0, 1.0, -1.0, 0.5]),
         Z=np.zeros(4), D=np.ones(4), R=np.zeros(4, dtype=int), rnames=["a"],
     )
-    result, changed = elimt_tree(tree)
-    assert changed
+    result = elimt_tree(tree)
+    # Design Decision #42: elimt_tree returns just the Tree now. "Did it
+    # change anything?" is recoverable from the result itself, which is why
+    # the old boolean second output was dropped rather than kept.
+    assert result is not tree
     assert result.n_nodes == 5  # one spacer node added
     children_count = np.asarray(result.dA.sum(axis=0)).ravel()
     assert children_count.max() == 2
@@ -142,9 +145,8 @@ def test_elimt_tree_converts_trifurcation_to_two_bifurcations():
 
 def test_elimt_tree_no_op_when_already_binary():
     tree = _branchy_tree()
-    result, changed = elimt_tree(tree)
-    assert not changed
-    assert result is tree
+    result = elimt_tree(tree)
+    assert result is tree  # unchanged input is returned as-is, not copied
 
 
 def test_repair_tree_produces_strictly_binary_tree():
@@ -192,7 +194,7 @@ def test_insert_tree_appends_leaves():
 
 def test_insertp_tree_inserts_at_requested_path_lengths():
     tree = _chain_tree()
-    new_tree, added = insertp_tree(tree, inode=3, plens=[5.0, 15.0, 25.0])
+    new_tree, added = insertp_tree(tree, inode=3, plens=[5.0, 15.0, 25.0], full_output=True)
     assert new_tree.n_nodes == 7
     assert added.sum() == 3
     assert ver_tree(new_tree, quiet=True) == []
@@ -203,7 +205,7 @@ def test_insertp_tree_inserts_at_requested_path_lengths():
 
 def test_insertp_tree_skips_positions_that_already_exist():
     tree = _chain_tree()
-    _, added = insertp_tree(tree, inode=3, plens=[10.0, 20.0])  # already nodes
+    _, added = insertp_tree(tree, inode=3, plens=[10.0, 20.0], full_output=True)  # already nodes
     assert added.sum() == 0
 
 
@@ -278,9 +280,14 @@ def test_cat_tree_connects_to_closest_node_by_default():
 # ---------------------------------------------------------------------------
 
 
-def test_resample_tree_preserves_branch_and_terminal_count():
+def test_resample_tree_anchors_preserves_branch_and_terminal_count():
+    """`method='anchors'` is defined by keeping these fixed.
+
+    MATLAB's method deliberately does not: it deletes every original node,
+    so branch and termination points move onto the sr grid and can merge.
+    """
     tree = sample_tree()
-    resampled = resample_tree(tree, sr=10.0)
+    resampled = resample_tree(tree, sr=10.0, method="anchors")
     from pytrees import B_tree, T_tree
 
     assert B_tree(resampled).sum() == B_tree(tree).sum()
@@ -298,9 +305,18 @@ def test_resample_tree_on_simple_chain_gives_expected_node_count():
 
 
 def test_resample_tree_extends_terminals_by_half_sr():
+    """The tip is stretched by sr/2 before resampling, in both methods.
+
+    The two methods then differ in what survives: `anchors` keeps the
+    stretched tip itself (35.0), `matlab` snaps to the last grid multiple
+    at or below it (30.0).
+    """
     tree = _chain_tree()
-    resampled = resample_tree(tree, sr=10.0, extend_terminals=True)
-    assert resampled.X.max() == pytest.approx(35.0)
+    anchors = resample_tree(tree, sr=10.0, method="anchors", extend_terminals=True)
+    assert anchors.X.max() == pytest.approx(35.0)
+
+    matlab = resample_tree(tree, sr=10.0, method="matlab", extend_terminals=True)
+    assert matlab.X.max() == pytest.approx(30.0)
 
 
 # ---------------------------------------------------------------------------

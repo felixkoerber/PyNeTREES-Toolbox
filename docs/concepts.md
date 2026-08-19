@@ -52,7 +52,7 @@ from pytrees import idpar_tree
 
 parent = idpar_tree(tree)   # parent[i] is node i's parent index
 parent[0]                   # 0 -- the root is its own parent by default
-idpar_tree(tree, no_self=True)[0]   # -1 -- explicit "no parent" instead
+idpar_tree(tree, root_self=False)[0]   # -1 -- explicit "no parent" instead
 ```
 
 ## 2. Indexing is 0-based, and "no parent" is `-1`
@@ -116,7 +116,7 @@ Three rules hold almost everywhere:
 
 ```python
 from pytrees import plot_tree, BO_tree
-plot_tree(tree, scalars=BO_tree(tree), cmap="viridis")
+plot_tree(tree, BO_tree(tree), cmap="viridis")   # color = per-node values
 ```
 
 ## 5. Trees are immutable in practice

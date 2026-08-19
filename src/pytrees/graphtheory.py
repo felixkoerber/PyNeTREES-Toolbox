@@ -20,9 +20,12 @@ it's equivalent, simpler to verify, and easier to read.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 from scipy import sparse
 
+from ._compat import resolve_flipped_bool
 from .core import NO_PARENT, Tree
 
 # ---------------------------------------------------------------------------
@@ -35,6 +38,14 @@ def _root_index(dA: sparse.spmatrix) -> int:
 
     Detected via row-sum rather than "index 0", since 0 is a valid node
     index here (unlike MATLAB) and can't double as a sentinel.
+
+    This is the ``dA``-only form, kept for the handful of internal callers
+    that hold an adjacency matrix rather than a :class:`~pytrees.Tree`.
+    **Prefer :attr:`Tree.root`** in anything that has a Tree in hand -- it's
+    public, needs no cross-module private import, and is therefore the one
+    people actually reach for (see Design Decision #48; three geometry
+    functions hardcoded ``[0]`` precisely because this helper was awkward to
+    get at from ``metrics``/``construct``).
     """
     row_sums = np.asarray(dA.sum(axis=1)).ravel()
     roots = np.flatnonzero(row_sums == 0)
@@ -134,22 +145,40 @@ def T_tree(tree: Tree) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def idpar_tree(tree: Tree, no_self: bool = False) -> np.ndarray:
+def idpar_tree(tree: Tree, root_self: bool = True, *, no_self=None) -> np.ndarray:
     """0-based index of each node's direct parent.
 
-    By default (``no_self=False``, matching MATLAB's default), the root is
-    its own parent -- a convenience many downstream computations rely on.
-    With ``no_self=True`` (MATLAB's ``'-z'``), the root instead gets
-    :data:`NO_PARENT` (``-1``).
+    Parameters
+    ----------
+    tree : Tree
+    root_self : bool, default True
+        What the root gets, since it has no parent. ``True`` (MATLAB's
+        default) makes the root its own parent, which lets expressions like
+        ``v[idpar]`` be written without a special case -- ``ratio_tree``
+        relies on it to give the root a ratio of exactly 1. ``False``
+        (MATLAB's ``'-z'``) gives the root :data:`NO_PARENT` (``-1``)
+        instead, which is what you want when you are about to *walk* the
+        parent chain and need a stopping condition.
+    no_self : bool, optional
+        **Deprecated** spelling of ``not root_self``; see
+        :mod:`pytrees._compat` and Design Decision #41.
+
+    Returns
+    -------
+    np.ndarray
+        Integer array of length ``n_nodes``.
     """
+    root_self = resolve_flipped_bool(
+        root_self, no_self, new_name="root_self", old_name="no_self"
+    )
     dA = tree.dA
     N = tree.n_nodes
     idpar = np.asarray(dA @ np.arange(N)).ravel().astype(int)
     is_root = np.asarray(dA.sum(axis=1)).ravel() == 0
-    if no_self:
-        idpar[is_root] = NO_PARENT
-    else:
+    if root_self:
         idpar[is_root] = np.flatnonzero(is_root)
+    else:
+        idpar[is_root] = NO_PARENT
     return idpar
 
 
@@ -193,7 +222,7 @@ def PL_tree(tree: Tree) -> np.ndarray:
     real granule cell, ~37 ms against ~2 ms here. See also :func:`LO_tree`.
     """
     order = _dfs_preorder(tree.dA)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
 
     PL = np.zeros(tree.n_nodes, dtype=float)
     for node in order:
@@ -203,12 +232,38 @@ def PL_tree(tree: Tree) -> np.ndarray:
     return PL
 
 
-def ipar_tree(tree: Tree) -> np.ndarray:
-    """Path to root: ``ipar[i] = [i, parent(i), grandparent(i), ..., root]``,
-    :data:`NO_PARENT`-padded to the depth of the deepest node.
+def ipar_tree(tree: Tree, terminals_only: bool = False, nodes=None) -> np.ndarray:
+    """Ancestor path of every node: ``[i, parent(i), ..., root]``.
+
+    Parameters
+    ----------
+    tree : Tree
+    terminals_only : bool, default False
+        MATLAB's ``'-T'``. Return one row per **termination point**, each
+        holding only the path back to (and excluding) its first branch
+        point -- i.e. that terminal's own unbranched segment.
+    nodes : array_like, optional
+        Restrict to these nodes' rows. With ``terminals_only``, selects
+        which terminals (MATLAB's ``ipart``).
+
+    Returns
+    -------
+    np.ndarray
+        ``(n_rows, max_depth + 2)`` int array, :data:`NO_PARENT`-padded.
+
+    Notes
+    -----
+    The full matrix is this toolbox's worst-scaling structure: it is dense
+    and ``n_nodes x max_depth``, which is 49 MB for a 3765-node granule cell
+    and remains ~3x superlinear (see `docs/port-audit.md`). Most callers
+    only need a traversal -- ``Pvec_tree``, ``PL_tree``, ``flatten_tree``,
+    ``morph_tree`` and ``smooth_tree`` were all moved off it for exactly
+    that reason. Reach for it when you genuinely need arbitrary ancestor
+    queries, and prefer ``terminals_only=True`` when you need terminal
+    segments, since that form is dramatically smaller.
     """
     N = tree.n_nodes
-    idpar_noself = idpar_tree(tree, no_self=True)
+    idpar_noself = idpar_tree(tree, root_self=False)
     max_depth = int(PL_tree(tree).max()) if N > 1 else 0
 
     ipar = np.full((N, max_depth + 2), NO_PARENT, dtype=int)
@@ -219,7 +274,30 @@ def ipar_tree(tree: Tree) -> np.ndarray:
         nxt = np.full(N, NO_PARENT, dtype=int)
         nxt[valid] = idpar_noself[current[valid]]
         current = nxt
-    return ipar
+
+    if terminals_only:
+        terminals = np.flatnonzero(T_tree(tree))
+        if nodes is not None:
+            terminals = np.intersect1d(terminals, np.asarray(nodes, dtype=int))
+        rows = ipar[terminals]
+        # Walk out from each terminal and stop at the first branch point.
+        # The branch point itself is excluded: it belongs to the parent
+        # section, not to this terminal's unbranched run.
+        is_branch = B_tree(tree)
+        seen_branch = np.zeros(len(rows), dtype=bool)
+        for col in range(rows.shape[1]):
+            entry = rows[:, col]
+            real = entry != NO_PARENT
+            rows[seen_branch, col] = NO_PARENT
+            hit = np.zeros(len(rows), dtype=bool)
+            hit[real] = is_branch[entry[real]]
+            rows[hit & ~seen_branch, col] = NO_PARENT
+            seen_branch |= hit
+        # trim the all-padding tail so the result is actually smaller
+        keep = (rows != NO_PARENT).any(axis=0)
+        return rows[:, keep] if keep.any() else rows[:, :1]
+
+    return ipar if nodes is None else ipar[np.asarray(nodes, dtype=int)]
 
 
 def BO_tree(tree: Tree) -> np.ndarray:
@@ -294,22 +372,41 @@ def child_tree(tree: Tree, v: np.ndarray | None = None) -> np.ndarray:
     return child
 
 
-def Pvec_tree(tree: Tree, v: np.ndarray) -> np.ndarray:
+def Pvec_tree(tree: Tree, v: np.ndarray | None = None) -> np.ndarray:
     """Cumulative sum of ``v`` along the path from the root to each node
     (inclusive of the node itself).
 
-    Pass any per-node quantity: with ``len_tree`` you get metric path
-    length, with ``ones`` you get topological depth + 1, and so on.
+    Parameters
+    ----------
+    tree : Tree
+    v : np.ndarray, optional
+        Per-node quantity to accumulate. Defaults to
+        :func:`~pytrees.len_tree`, giving **metric path length from the
+        root [um]** -- overwhelmingly the intended meaning, and what six
+        call sites inside this toolbox alone were spelling out longhand as
+        ``Pvec_tree(tree, len_tree(tree))``. Pass ``np.ones(n_nodes)`` for
+        topological depth + 1, or any other per-node array.
 
+    Returns
+    -------
+    np.ndarray
+        Float array of length ``n_nodes``.
+
+    Notes
+    -----
     Computed by the recurrence ``P[node] = P[parent] + v[node]`` in
     pre-order, which is O(n_nodes). The previous version summed a prebuilt
     ``ipar_tree`` matrix instead -- correct, but that matrix is
     ``n_nodes x max_depth`` (49 MB, 6.1M entries for a real granule cell),
     so it was the worst-scaling function in the toolbox at 3.4x superlinear.
     """
+    if v is None:
+        from .metrics import len_tree
+
+        v = len_tree(tree)
     v = np.asarray(v, dtype=float)
     order = _dfs_preorder(tree.dA)
-    idpar = idpar_tree(tree, no_self=True)
+    idpar = idpar_tree(tree, root_self=False)
 
     out = np.zeros(tree.n_nodes, dtype=float)
     for node in order:
@@ -340,15 +437,50 @@ def rindex_tree(tree: Tree) -> np.ndarray:
     return rindex
 
 
-def sub_tree(tree: Tree, inode: int) -> np.ndarray:
-    """Boolean mask selecting ``inode`` and all of its descendants.
+class SubTree(NamedTuple):
+    """Result of :func:`sub_tree`: which nodes, and the tree they form."""
 
-    Walks the child lists directly. An earlier version read each node's
-    children as ``dA[:, node].toarray()``, which materialises a dense
+    mask: np.ndarray
+    """Boolean mask over the *parent* tree, ``True`` for nodes in the subtree
+    (matching MATLAB's ``sub``: "1 if part of subtree, 0 if not")."""
+    tree: Tree | None
+    """The extracted subtree, or ``None`` if ``with_tree=False``."""
+
+
+def sub_tree(tree: Tree, inode: int, with_tree: bool = True) -> SubTree:
+    """The subtree rooted at ``inode``: which nodes it contains, and the tree.
+
+    Parameters
+    ----------
+    tree : Tree
+    inode : int
+        0-based index of the subtree's root.
+    with_tree : bool, default True
+        Whether to build the extracted :class:`~pytrees.Tree` as well as the
+        mask. Pass ``False`` in a per-node loop -- it costs about 30% extra
+        per call (2203 vs 1682 us on a 3765-node granule cell), which is
+        cheap once but not free thousands of times over.
+
+    Returns
+    -------
+    SubTree
+        Named tuple ``(mask, tree)``. Unpacks like MATLAB's
+        ``[sub, subtree] = sub_tree(...)``, and ``result.mask`` also works.
+
+    Notes
+    -----
+    **Region names are trimmed** to those the subtree actually uses, with
+    ``R`` reindexed to match. MATLAB does not do this -- ``sub_tree.m``
+    carries the comment *"NOTE ! region update for tree output still
+    missing!!!"* -- and the result there keeps the whole parent's region
+    list. Cutting a purely dendritic branch out of a granule cell and being
+    told it still has an ``axon`` region is not useful, so this port closes
+    the gap rather than reproducing it (Design Decision #50).
+
+    Traversal walks the child lists directly. An earlier version read each
+    node's children as ``dA[:, node].toarray()``, which materialises a dense
     length-``n_nodes`` column *per visited node* and makes a single BFS
-    O(n_nodes^2) -- 514 ms on a 3765-node granule cell, against ~1 ms here.
-    That mattered beyond this function, since `asym_tree`, `repair_tree` and
-    `clean_tree` all call it in a loop.
+    O(n_nodes^2) -- 514 ms on that same granule cell, against ~1.7 ms here.
     """
     children = _children_lists(tree.dA)
     mask = np.zeros(tree.n_nodes, dtype=bool)
@@ -360,17 +492,70 @@ def sub_tree(tree: Tree, inode: int) -> np.ndarray:
             if not mask[child]:
                 mask[child] = True
                 stack.append(child)
-    return mask
+
+    if not with_tree:
+        return SubTree(mask, None)
+    return SubTree(mask, _extract_subtree(tree, mask))
 
 
-def redirect_tree(tree: Tree, new_root: int, name: str | None = None):
-    """Reroot the tree at ``new_root``, reversing edge direction as needed
-    along the path from the old root. Returns ``(new_tree, order)`` where
-    ``order[i]`` is the old index now at new position ``i``.
+def _extract_subtree(tree: Tree, mask: np.ndarray) -> Tree:
+    """Cut ``mask``'s nodes out as a standalone Tree, trimming unused regions.
 
-    Only makes topological sense when ``new_root`` is not itself a branch
-    point (rerooting there would leave it a trifurcation) -- matching the
-    MATLAB original's documented restriction.
+    Splitting this out of :func:`sub_tree` keeps the traversal and the
+    reindex separately testable, and gives ``delete_tree``'s forest split a
+    single place to get the same region trimming.
+    """
+    nodes = np.flatnonzero(mask)
+    sub = tree.reindexed(nodes)
+
+    used = np.unique(sub.R)
+    if len(used) == len(tree.rnames):
+        return sub  # every region still present; nothing to trim
+
+    # remap R so it indexes the trimmed rnames list rather than the parent's
+    remap = np.full(len(tree.rnames), -1, dtype=int)
+    remap[used] = np.arange(len(used))
+    sub.R = remap[sub.R]
+    sub.rnames = [tree.rnames[i] for i in used]
+    return sub
+
+
+class RedirectResult(NamedTuple):
+    """Result of :func:`redirect_tree` with ``full_output=True``."""
+
+    tree: Tree
+    """The rerooted tree."""
+    order: np.ndarray
+    """``order[i]`` is the old node index now sitting at new position ``i``."""
+
+
+def redirect_tree(
+    tree: Tree, new_root: int, name: str | None = None, *, full_output: bool = False
+):
+    """Reroot the tree at ``new_root``, reversing edge direction as needed.
+
+    Parameters
+    ----------
+    tree : Tree
+    new_root : int
+        0-based index of the node to become the new root.
+    name : str, optional
+        Name for the returned tree; defaults to the input's.
+    full_output : bool, default False
+        If ``True``, return a :class:`RedirectResult` ``(tree, order)``
+        instead of just the tree -- ``order`` being the only way to map old
+        node indices onto new ones after the reindex (Design Decision #42).
+
+    Returns
+    -------
+    Tree or RedirectResult
+
+    Warns
+    -----
+    UserWarning
+        If ``new_root`` is a branch point. Rerooting there leaves it a
+        trifurcation, so the result is no longer binary -- matching the
+        MATLAB original's documented restriction.
     """
     N = tree.n_nodes
     if B_tree(tree)[new_root]:
@@ -423,21 +608,51 @@ def redirect_tree(tree: Tree, new_root: int, name: str | None = None):
         rnames=tree.rnames,
         name=tree.name if name is None else name,
     )
-    return new_tree, order_arr
+    return RedirectResult(new_tree, order_arr) if full_output else new_tree
 
 
-def sort_tree(tree: Tree, by: str = "hier"):
-    """Reindex nodes to be BCT-conform (parent always precedes its children,
-    each subtree contiguous). Returns ``(new_tree, order)``.
+class SortResult(NamedTuple):
+    """Result of :func:`sort_tree` with ``full_output=True``."""
 
-    ``by``:
-        ``'hier'`` (default) -- keep nodes in their existing relative order,
-            only fixing up parent/child adjacency (many isomorphic BCT
-            orders satisfy this; this one is arbitrary but cheap).
-        ``'lo'`` -- order by (topological path length, level order) first,
-            giving a near-canonical ordering (MATLAB's ``'-LO'``).
-        ``'lex'`` -- order by number of children, terminals before
-            continuations before branches (MATLAB's ``'-LEX'``).
+    tree: Tree
+    """The reindexed, BCT-conform tree."""
+    order: np.ndarray
+    """``order[i]`` is the old node index now sitting at new position ``i``."""
+
+
+def sort_tree(tree: Tree, by: str = "hier", *, full_output: bool = False):
+    """Reindex nodes to be BCT-conform: every parent precedes its children,
+    and each subtree occupies a contiguous index block.
+
+    Parameters
+    ----------
+    tree : Tree
+    by : {'hier', 'lo', 'lex'}, default 'hier'
+        Which of the many valid BCT orderings to produce.
+
+        - ``'hier'`` -- keep nodes in their existing relative order, only
+          fixing up parent/child adjacency. Arbitrary among the valid
+          orderings, but the cheapest.
+        - ``'lo'`` -- order by (topological path length, level order),
+          giving a near-canonical ordering (MATLAB's ``'-LO'``).
+        - ``'lex'`` -- order by number of children: terminals, then
+          continuations, then branches (MATLAB's ``'-LEX'``).
+    full_output : bool, default False
+        If ``True``, return a :class:`SortResult` ``(tree, order)`` instead
+        of just the tree (Design Decision #42).
+
+    Returns
+    -------
+    Tree or SortResult
+
+    Notes
+    -----
+    ``'hier'`` is a DFS pre-order rather than MATLAB's level-order-ish
+    scheme (Design Decision #12). Both satisfy the BCT invariant and nothing
+    downstream depends on which valid ordering it gets, but the consequence
+    is worth stating plainly: **node indices are not comparable between
+    MATLAB and pytrees after a sort.** Do not cross-reference "node 417"
+    between the two toolboxes.
     """
     N = tree.n_nodes
     if by == "hier":
@@ -458,7 +673,8 @@ def sort_tree(tree: Tree, by: str = "hier"):
     dA_pre = tree.dA.tocsr()[pre_order][:, pre_order]
     hier_order = _dfs_preorder(dA_pre)
     order = pre_order[hier_order]
-    return tree.reindexed(order), order
+    sorted_tree = tree.reindexed(order)
+    return SortResult(sorted_tree, order) if full_output else sorted_tree
 
 
 def strahler_tree(tree: Tree) -> np.ndarray:
@@ -505,8 +721,10 @@ def asym_tree(
                 f"node {bp} has {len(children)} children; asym_tree requires "
                 "strictly binary branch points (run repair_tree first)"
             )
-        v1 = vec[sub_tree(tree, int(children[0]))].sum()
-        v2 = vec[sub_tree(tree, int(children[1]))].sum()
+        # with_tree=False: this runs once per branch point, and the
+        # extracted Tree would be built and discarded every time
+        v1 = vec[sub_tree(tree, int(children[0]), with_tree=False).mask].sum()
+        v2 = vec[sub_tree(tree, int(children[1]), with_tree=False).mask].sum()
         if van_pelt:
             asym[bp] = 0.0 if v1 + v2 <= 2 else abs(v1 - v2) / (v1 + v2 - 2)
         else:
@@ -514,7 +732,18 @@ def asym_tree(
     return asym
 
 
-def dissect_tree(tree: Tree, by_region: bool = True) -> np.ndarray:
+class SectionResult(NamedTuple):
+    """Result of :func:`dissect_tree` with ``with_positions=True``."""
+
+    sections: np.ndarray
+    """``(n_sections, 2)`` array of ``(start_node, end_node)``."""
+    positions: np.ndarray
+    """``(n_nodes, 2)``: each node's section index, and how far along
+    that section it sits as a fraction in ``[0, 1]``."""
+
+
+def dissect_tree(tree: Tree, by_region: bool = True, *,
+                 with_positions: bool = False):
     """Group nodes into sections delimited by branch points, termination
     points, and (optionally) region changes.
 
@@ -570,4 +799,32 @@ def dissect_tree(tree: Tree, by_region: bool = True) -> np.ndarray:
             node = idpar[node]
         starts.append(node)
         ends.append(end)
-    return np.array(list(zip(starts, ends)), dtype=int).reshape(-1, 2)
+    sections = np.array(list(zip(starts, ends)), dtype=int).reshape(-1, 2)
+    if not with_positions:
+        return sections
+
+    # Per-node (section index, relative position along it). This is what
+    # NEURON needs to place a synapse: "section 12, 30% of the way along".
+    Plen = Pvec_tree(tree)
+    positions = np.zeros((tree.n_nodes, 2), dtype=float)
+    positions[:, 0] = -1
+    for index, (start, end) in enumerate(sections.tolist()):
+        span = Plen[end] - Plen[start]
+        node = end
+        # Walk back to but *excluding* the start node. A branch point is the
+        # end of one section and the start of the next two, so claiming it
+        # here would overwrite the position it already holds as the previous
+        # section's endpoint -- and it belongs to that one, at fraction 1.0.
+        while node != start:
+            positions[node, 0] = index
+            positions[node, 1] = (
+                (Plen[node] - Plen[start]) / span if span > 0 else 0.0
+            )
+            node = idpar[node]
+
+    # The root starts the tree rather than continuing any section, so it is
+    # never anyone's endpoint; give it the first section at fraction 0.
+    root = tree.root
+    if positions[root, 0] < 0:
+        positions[root] = (0.0, 0.0)
+    return SectionResult(sections, positions)

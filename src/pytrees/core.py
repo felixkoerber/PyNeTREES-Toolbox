@@ -93,7 +93,76 @@ class Tree:
 
     @property
     def n_nodes(self) -> int:
+        """Number of nodes in the tree."""
         return self.dA.shape[0]
+
+    @property
+    def root(self) -> int:
+        """Index of the root node — the one node with no parent.
+
+        Found by in-degree (``dA`` row sum), *never* by assuming index 0.
+        After ``sort_tree``/``repair_tree`` the root does sit at 0, but a
+        freshly loaded, hand-built or externally generated tree carries no
+        such guarantee, and silently transforming around the wrong node
+        produces a plausible-looking but wrong result rather than an error.
+
+        This is the public face of Design Decision #10, promoted to a
+        property in #48 precisely because the private ``_root_index`` helper
+        lived in ``graphtheory`` and was awkward to reach from
+        ``metrics``/``construct`` — which is how ``scale_tree``,
+        ``flip_tree`` and ``cap_tree`` all ended up hardcoding ``[0]``.
+        Reach for ``tree.root``; it is both the obvious and the correct
+        thing to write.
+
+        Raises
+        ------
+        ValueError
+            If the tree has no root or more than one (i.e. it is empty,
+            cyclic, or a disconnected forest).
+        """
+        roots = np.flatnonzero(np.asarray(self.dA.sum(axis=1)).ravel() == 0)
+        if len(roots) != 1:
+            raise ValueError(
+                f"expected exactly one root, found {len(roots)}"
+                + (" (tree is empty)" if self.n_nodes == 0 else "")
+            )
+        return int(roots[0])
+
+    @property
+    def total_length(self) -> float:
+        """Summed segment length of the whole tree [um].
+
+        Equivalent to ``len_tree(tree).sum()``, which is how MATLAB spells
+        it. Deliberately **not** cached: ``Tree`` is mutable in place
+        (``tree.X[5] = ...`` is legal and used by the editing functions), so
+        a cache would go stale silently. The recomputation is well under a
+        millisecond even on a 4000-node reconstruction.
+        """
+        from .metrics import len_tree
+
+        return float(len_tree(self).sum())
+
+    @property
+    def total_surface(self) -> float:
+        """Summed membrane surface area of the whole tree [um^2].
+
+        Equivalent to ``surf_tree(tree).sum()``. Uncached, for the reason
+        given on :attr:`total_length`.
+        """
+        from .metrics import surf_tree
+
+        return float(surf_tree(self).sum())
+
+    @property
+    def total_volume(self) -> float:
+        """Summed enclosed volume of the whole tree [um^3].
+
+        Equivalent to ``vol_tree(tree).sum()``. Uncached, for the reason
+        given on :attr:`total_length`.
+        """
+        from .metrics import vol_tree
+
+        return float(vol_tree(self).sum())
 
     def validate(self, quiet: bool = False) -> list[str]:
         """Convenience wrapper around :func:`ver_tree`."""

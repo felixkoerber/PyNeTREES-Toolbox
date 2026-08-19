@@ -17,12 +17,18 @@ that snapping rule "arbitrary", not a mathematical necessity).
 
 from __future__ import annotations
 
+import logging
+from typing import NamedTuple
+
 import numpy as np
 from scipy import sparse
 
+from ._compat import resolve_flipped_bool
 from .core import NO_PARENT, Tree
 from .graphtheory import (
+    B_tree,
     C_tree,
+    child_tree,
     Pvec_tree,
     T_tree,
     dissect_tree,
@@ -33,6 +39,8 @@ from .graphtheory import (
     sub_tree,
 )
 from .metrics import cyl_tree, direction_tree, eucl_tree, len_tree, morph_tree, tran_tree
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +117,7 @@ def delete_tree(tree: Tree, inodes, keep_regions: bool = False) -> Tree | list[T
     roots = np.flatnonzero(np.asarray(dA.sum(axis=1)).ravel() == 0)
     if len(roots) <= 1:
         return result
-    return [result.reindexed(np.flatnonzero(sub_tree(result, int(r)))) for r in roots]
+    return [sub_tree(result, int(r)).tree for r in roots]
 
 
 # ---------------------------------------------------------------------------
@@ -128,10 +136,40 @@ def elim0_tree(tree: Tree, keep_regions: bool = False) -> Tree:
     return tree
 
 
-def elimt_tree(tree: Tree, no_root: bool = False):
+def elimt_tree(tree: Tree, at_root: bool = True, *, no_root=None) -> Tree:
     """Replace every multifurcation (3+ children) with a short chain of
-    tiny bifurcations, each offset by ~0.0001 um. Returns ``(tree, changed)``.
+    bifurcations, each spacer offset by ~0.0001 um along the parent segment.
+
+    Parameters
+    ----------
+    tree : Tree
+    at_root : bool, default True
+        Whether to also split a multifurcating *root*. ``True`` matches
+        MATLAB's default. ``False`` (MATLAB's ``'-r'``) leaves the root
+        alone, which is what you want for a soma that legitimately branches
+        into several primary dendrites and shouldn't grow a spacer chain.
+    no_root : bool, optional
+        **Deprecated** spelling of ``not at_root``; see
+        :mod:`pytrees._compat` and Design Decision #41.
+
+    Returns
+    -------
+    Tree
+        The de-multifurcated tree, or the input unchanged if there was
+        nothing to do.
+
+    Notes
+    -----
+    Previously returned ``(tree, changed)``. The flag is gone (Design
+    Decision #42): it is recomputable -- ``typeN_tree(result).max() <= 2``,
+    or simply comparing ``n_nodes`` -- and every caller was unpacking a
+    tuple for information almost none of them used. When nothing changes,
+    that fact now goes to :mod:`logging` at debug level, so library code
+    stays quiet by default but the information is still recoverable.
     """
+    at_root = resolve_flipped_bool(
+        at_root, no_root, new_name="at_root", old_name="no_root"
+    )
     dA = tree.dA.tocsr()
     N = tree.n_nodes
     idpar = idpar_tree(tree)
@@ -139,10 +177,11 @@ def elimt_tree(tree: Tree, no_root: bool = False):
     children_count = np.asarray(dA.sum(axis=0)).ravel()
 
     multif = np.flatnonzero(children_count > 2)
-    if no_root:
+    if not at_root:
         multif = multif[~is_root[multif]]
     if len(multif) == 0:
-        return tree, False
+        _log.debug("elimt_tree: no multifurcations in %r, returning unchanged", tree.name)
+        return tree
 
     coo = dA.tocoo()
     edges = list(zip(coo.row.tolist(), coo.col.tolist()))
@@ -189,7 +228,7 @@ def elimt_tree(tree: Tree, no_root: bool = False):
         dA=dA_new, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
         R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
     )
-    return new_tree, True
+    return new_tree
 
 
 def repair_tree(tree: Tree, no_root_trifurcation: bool = False) -> Tree:
@@ -198,8 +237,8 @@ def repair_tree(tree: Tree, no_root_trifurcation: bool = False) -> Tree:
     order. Most other functions in this toolbox assume their input has
     already been through this.
     """
-    tree, _ = elimt_tree(tree, no_root=no_root_trifurcation)
-    tree, _ = elimt_tree(tree)
+    tree = elimt_tree(tree, at_root=not no_root_trifurcation)
+    tree = elimt_tree(tree)
     tree = elim0_tree(tree)
 
     if tree.n_nodes > 1 and T_tree(tree)[0]:
@@ -210,7 +249,7 @@ def repair_tree(tree: Tree, no_root_trifurcation: bool = False) -> Tree:
             rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
         )
 
-    tree, _ = sort_tree(tree, by="lo")
+    tree = sort_tree(tree, by="lo")
     return tree
 
 
@@ -243,19 +282,95 @@ def root_tree(tree: Tree) -> Tree:
     )
 
 
-def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None) -> Tree:
-    """Append new leaf nodes to a tree.
+class InsertResult(NamedTuple):
+    """Result of :func:`insert_tree` with ``full_output=True``."""
 
-    Each new point ``i`` becomes a child of the *existing* node
-    ``parent[i]`` (0-based). Regions default to their parent's region.
-    Replaces MATLAB's ``[inode R X Y Z D idpar]`` SWC-tuple calling
-    convention with explicit arrays.
+    tree: Tree
+    """The tree with the new nodes appended."""
+    inodes: np.ndarray
+    """0-based indices of the newly added nodes, in input order."""
+
+
+def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None, *, full_output: bool = False):
+    """Append new nodes to a tree.
+
+    Parameters
+    ----------
+    tree : Tree
+    X, Y, Z, D : array_like
+        Coordinates [um] and diameters [um] of the new nodes.
+    parent : array_like of int
+        0-based parent index for each new node. Replaces MATLAB's
+        ``[inode R X Y Z D idpar]`` SWC-tuple calling convention.
+    R : array_like of int, optional
+        Region index per new node; defaults to each node's parent's region.
+    full_output : bool, default False
+        If ``True``, return an :class:`InsertResult` ``(tree, inodes)``.
+
+    Returns
+    -------
+    Tree or InsertResult
+
+    Raises
+    ------
+    ValueError
+        If any ``parent[i]`` is a *forward* reference -- i.e. points at a
+        new node that has not been assigned an index yet
+        (``parent[i] >= N + i``), or is out of range entirely. Left
+        unchecked this silently produces a cycle or an orphan.
+
+    Notes
+    -----
+    **New nodes may parent each other.** The parent index is written
+    straight into the adjacency matrix, so ``parent[i]`` may refer either to
+    an existing node (``0 <= p < n_nodes``) or to an *earlier* new node
+    (``n_nodes <= p < n_nodes + i``). That is not incidental --
+    :func:`~pytrees.cap_tree` depends on it, chaining each cap segment onto
+    the previous one:
+
+    .. code-block:: python
+
+        # three nodes in a chain hanging off existing node 0
+        n = tree.n_nodes
+        insert_tree(tree, X=[1., 2., 3.], Y=[0., 0., 0.], Z=[0., 0., 0.],
+                    D=[1., 1., 1.], parent=[0, n, n + 1])
+
+    The capability was previously undocumented and unvalidated; the
+    forward-reference check above is what makes it safe to rely on.
     """
     X, Y, Z, D = (np.asarray(a, dtype=float) for a in (X, Y, Z, D))
     parent = np.asarray(parent, dtype=int)
     n_new = len(X)
     N = tree.n_nodes
-    R = tree.R[parent] if R is None else np.asarray(R, dtype=int)
+
+    if n_new and (len(Y) != n_new or len(Z) != n_new or len(D) != n_new
+                  or len(parent) != n_new):
+        raise ValueError(
+            f"insert_tree: X/Y/Z/D/parent must all have the same length "
+            f"(got {n_new}, {len(Y)}, {len(Z)}, {len(D)}, {len(parent)})"
+        )
+
+    limits = N + np.arange(n_new)
+    bad = np.flatnonzero((parent < 0) | (parent >= limits))
+    if len(bad):
+        i = int(bad[0])
+        raise ValueError(
+            f"insert_tree: parent[{i}] = {parent[i]} is not a valid parent for "
+            f"new node {N + i}. Parents must be an existing node (0..{N - 1}) "
+            f"or an *earlier* new node (up to {N + i - 1}); a forward "
+            f"reference would create a cycle or an orphan."
+        )
+
+    if R is None:
+        # Inherit each new node's region from its parent. A parent may itself
+        # be a new node, whose region is only known once *it* has inherited --
+        # so resolve in input order, which the forward-reference check above
+        # guarantees is a valid topological order.
+        R = np.empty(n_new, dtype=int)
+        for i, p in enumerate(parent.tolist()):
+            R[i] = tree.R[p] if p < N else R[p - N]
+    else:
+        R = np.asarray(R, dtype=int)
 
     coo = tree.dA.tocoo()
     rows = np.concatenate([coo.row, np.arange(N, N + n_new)])
@@ -264,7 +379,7 @@ def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None) -> Tree:
         (np.ones(len(rows)), (rows, cols)), shape=(N + n_new, N + n_new)
     ).tocsr()
 
-    return Tree(
+    new_tree = Tree(
         dA=dA,
         X=np.concatenate([tree.X, X]),
         Y=np.concatenate([tree.Y, Y]),
@@ -275,12 +390,45 @@ def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None) -> Tree:
         name=tree.name,
         frustum=tree.frustum,
     )
+    if full_output:
+        return InsertResult(new_tree, np.arange(N, N + n_new))
+    return new_tree
 
 
-def insertp_tree(tree: Tree, inode: int | None = None, plens=None):
-    """Insert nodes at path lengths ``plens`` [um] on the path from the
-    root to ``inode`` (default: every 10 um, or halfway if the path is
-    shorter than 10 um). Returns ``(new_tree, added_mask)``.
+class InsertpResult(NamedTuple):
+    """Result of :func:`insertp_tree` with ``full_output=True``."""
+
+    tree: Tree
+    """The tree with the interpolated nodes inserted, re-sorted."""
+    added: np.ndarray
+    """Boolean mask over the *new* tree, ``True`` for inserted nodes."""
+
+
+def insertp_tree(
+    tree: Tree, inode: int | None = None, plens=None, *, full_output: bool = False
+):
+    """Insert nodes at given path lengths along the root-to-``inode`` path.
+
+    Parameters
+    ----------
+    tree : Tree
+    inode : int, optional
+        0-based index of the node whose root path is subdivided. Defaults
+        to the last node.
+    plens : array_like, optional
+        Path lengths [um] from the root at which to insert. Defaults to
+        every 10 um, or a single node at the halfway point if the path is
+        shorter than 10 um. Values already occupied by a node, or beyond
+        the path's end, are dropped.
+    full_output : bool, default False
+        If ``True``, return an :class:`InsertpResult` ``(tree, added)``.
+        The mask cannot be recomputed afterwards -- the result is re-sorted,
+        so inserted nodes are no longer identifiable by index (Design
+        Decision #42).
+
+    Returns
+    -------
+    Tree or InsertpResult
     """
     N = tree.n_nodes
     Plen = Pvec_tree(tree, len_tree(tree))
@@ -304,7 +452,7 @@ def insertp_tree(tree: Tree, inode: int | None = None, plens=None):
     plens = np.setdiff1d(plens, plen_path)
     plens = np.sort(plens[plens < max(plen_path)])
     if len(plens) == 0:
-        return tree, np.zeros(N, dtype=bool)
+        return InsertpResult(tree, np.zeros(N, dtype=bool)) if full_output else tree
 
     X, Y, Z, D, R = tree.X.tolist(), tree.Y.tolist(), tree.Z.tolist(), tree.D.tolist(), tree.R.tolist()
     edges_to_remove, edges_to_add = [], []
@@ -341,8 +489,10 @@ def insertp_tree(tree: Tree, inode: int | None = None, plens=None):
         dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
         R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
     )
-    sorted_tree, order = sort_tree(new_tree, by="lo")
-    return sorted_tree, order >= N
+    sorted_tree, order = sort_tree(new_tree, by="lo", full_output=True)
+    if full_output:
+        return InsertpResult(sorted_tree, order >= N)
+    return sorted_tree
 
 
 def interpd_tree(tree: Tree, node1: int, node2: int) -> Tree:
@@ -376,7 +526,7 @@ def recon_tree(tree: Tree, ichilds, ipars, shift: bool = True) -> Tree:
 
     if shift:
         for child, parent in zip(ichilds, ipars):
-            mask = sub_tree(tree, int(child))
+            mask = sub_tree(tree, int(child), with_tree=False).mask
             dX, dY, dZ = X[child] - X[parent], Y[child] - Y[parent], Z[child] - Z[parent]
             X[mask] -= dX
             Y[mask] -= dY
@@ -445,7 +595,7 @@ def cat_tree(
         point = np.array([tree2.X[inode2], tree2.Y[inode2], tree2.Z[inode2]])
         inode1 = int(np.argmin(eucl_tree(tree1, point)))
 
-    tree2, _ = redirect_tree(tree2, inode2)
+    tree2 = redirect_tree(tree2, inode2)
     N1 = tree1.n_nodes
     dA = sparse.block_diag([tree1.dA, tree2.dA], format="lil")
     dA[N1, inode1] = 1
@@ -469,34 +619,101 @@ def cat_tree(
         dA=dA.tocsr(), X=X, Y=Y, Z=Z, D=D, R=R, rnames=rnames,
         name=tree1.name, frustum=tree1.frustum,
     )
-    return sort_tree(merged, by="lo")[0]
+    return sort_tree(merged, by="lo")
 
 
-def resample_tree(tree: Tree, sr: float = 10.0, extend_terminals: bool = True) -> Tree:
-    """Redistribute nodes along the tree at approximately ``sr`` [um] spacing.
+def resample_tree(
+    tree: Tree,
+    sr: float = 10.0,
+    method: str = "matlab",
+    *,
+    extend_terminals: bool = True,
+    interp_diameter: bool = False,
+    conserve_length: bool = False,
+    collapse_branches: bool = True,
+    preserve_branch_spacing: bool = False,
+    trim_regions: bool = True,
+) -> Tree:
+    """Redistribute a tree's nodes to roughly ``sr`` [um] spacing.
 
-    Works section-by-section (see :func:`~pytrees.dissect_tree`): branch and
-    termination points are preserved exactly at their original positions,
-    and every original node strictly between two such anchors is replaced
-    by new nodes at multiples of ``sr`` path length, interpolated along the
-    original polyline through that section. This is a deliberately simpler
-    convention than MATLAB's version, which also relocates branch/
-    termination points onto the resampling grid via a delete-and-splice
-    pass -- see PORT_STATUS.md Design Decisions (the original docstring
-    itself calls that snapping rule "arbitrary", not a mathematical
-    necessity, so this port picked the anchor-preserving alternative).
+    Parameters
+    ----------
+    tree : Tree
+    sr : float, default 10.0
+        Target internode spacing [um].
+    method : {'matlab', 'anchors'}, default 'matlab'
+        Which abstraction to use for the bits resampling leaves
+        underdetermined -- MATLAB's own docstring says "some abstraction
+        principles need to be arbitrarily set", and the two methods set
+        them differently.
 
-    If ``extend_terminals`` (default), each terminal segment is first
-    stretched by ``sr / 2`` (via :func:`morph_tree`) to reduce truncation
-    bias at branch tips, matching MATLAB's default behavior.
+        - ``'matlab'`` -- a faithful port of `resample_tree.m`. Every node
+          in the result sits at an exact multiple of ``sr`` path length
+          from the root, because *all* original nodes are deleted after the
+          grid points are inserted. Branch and termination points therefore
+          **move** onto the grid.
+        - ``'anchors'`` -- branch and termination points stay exactly where
+          they were, and only the nodes between them are redistributed.
+          Better when you care about branch-point positions (the NEURON
+          bridge does), but it is not what MATLAB computes.
 
-    A tree with a single node has no segments to resample and is returned
-    unchanged. (Without this guard the section-based rebuild below produces
-    a zero-node tree, which then fails deep inside `sort_tree` with a
-    confusing "expected exactly one root, found 0".)
+    extend_terminals : bool, default True
+        Stretch each terminal segment by ``sr / 2`` first, so the grid
+        does not systematically truncate branch tips. MATLAB does this
+        unconditionally; here it is switchable.
+    interp_diameter : bool, default False
+        MATLAB's ``'-d'``. Interpolate diameters along each segment rather
+        than inheriting the child node's. Changes total surface and volume,
+        which is why it is off by default.
+    conserve_length : bool, default False
+        MATLAB's ``'-l'``. After resampling, stretch every segment back to
+        exactly ``sr`` so total path lengths match the original. The tree
+        grows slightly overall, so this is wrong for automated
+        reconstruction pipelines and right for length-preserving analysis.
+    collapse_branches : bool, default True
+        Merge branch daughters that end up implausibly close together
+        (within 0.75 * 2 * ``sr`` of path length of each other). MATLAB's
+        ``'-v'`` switches this *off*; the sense is inverted here per Design
+        Decision #41.
+    preserve_branch_spacing : bool, default False
+        MATLAB's ``'-b'``. Lengthen sub-``sr`` segments that run between two
+        branch points, so consecutive branch points do not collapse into a
+        multifurcation. MATLAB's own docstring warns this "does not
+        preserve length" and "might give a mess with high sr".
+    trim_regions : bool, default True
+        Drop region names left unused after resampling. MATLAB's ``'-r'``
+        switches this off; inverted here per #41.
+
+    Returns
+    -------
+    Tree
+
+    Notes
+    -----
+    ``method='matlab'`` is the default as of Design Decision #45, reversing
+    #23. The port originally shipped only the anchor-preserving variant, on
+    the grounds that MATLAB's snapping rule is arbitrary -- which is true,
+    but "arbitrary" is not the same as "wrong", and defaulting to something
+    other than the reference implementation makes every downstream number
+    quietly incomparable.
+
+    A single-node tree has nothing to resample and is returned unchanged.
     """
+    if method not in ("matlab", "anchors"):
+        raise ValueError(f"method must be 'matlab' or 'anchors', got {method!r}")
     if tree.n_nodes < 2:
         return tree
+
+    if method == "matlab":
+        return _resample_matlab(
+            tree, sr,
+            extend_terminals=extend_terminals,
+            interp_diameter=interp_diameter,
+            conserve_length=conserve_length,
+            collapse_branches=collapse_branches,
+            preserve_branch_spacing=preserve_branch_spacing,
+            trim_regions=trim_regions,
+        )
 
     if extend_terminals:
         length = len_tree(tree)
@@ -564,7 +781,215 @@ def resample_tree(tree: Tree, sr: float = 10.0, extend_terminals: bool = True) -
         dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
         R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
     )
-    return sort_tree(resampled, by="lo")[0]
+    return sort_tree(resampled, by="lo")
+
+
+
+def _grid_points(plen_parent: float, plen_child: float, sr: float) -> list[float]:
+    """Path lengths on the ``0, sr, 2*sr, ...`` grid lying inside one segment.
+
+    MATLAB writes this as ``Gpath = 0 : sr : Plen(child)`` followed by
+    ``Gpath(Gpath > Plen(parent))``. Building the whole ramp and discarding
+    most of it is cheap in MATLAB and wasteful here, so this computes the
+    index range directly -- identical values, no allocation proportional to
+    the node's depth in the tree.
+    """
+    k_first = int(np.floor(plen_parent / sr)) + 1
+    k_last = int(np.floor(plen_child / sr))
+    return [k * sr for k in range(k_first, k_last + 1) if k * sr > plen_parent]
+
+
+def _resample_matlab(
+    tree: Tree,
+    sr: float,
+    *,
+    extend_terminals: bool,
+    interp_diameter: bool,
+    conserve_length: bool,
+    collapse_branches: bool,
+    preserve_branch_spacing: bool,
+    trim_regions: bool,
+) -> Tree:
+    """Faithful port of ``edit/resample_tree.m``.
+
+    The original's five steps, kept visible because each is separately
+    observable in the output:
+
+    1. stretch terminal segments by ``sr / 2`` (and, with the branch-spacing
+       option, stretch short branch-to-branch segments to ``sr``), then
+       :func:`morph_tree`;
+    2. on every edge, insert a node at each multiple of ``sr`` of path
+       length from the root that falls strictly inside that edge;
+    3. **delete every original node except the root** -- the step that moves
+       branch and termination points onto the grid, and the one
+       ``method='anchors'`` declines to do;
+    4. collapse branch daughters the grid left implausibly close together;
+    5. optionally re-stretch every segment to exactly ``sr``.
+    """
+    N = tree.n_nodes
+
+    # --- 1. terminal extension, and optional branch-spacing protection ----
+    if extend_terminals or preserve_branch_spacing:
+        length = len_tree(tree)
+        target = length.copy()
+        if extend_terminals:
+            term = T_tree(tree)
+            target[term] = length[term] + 0.5 * sr
+        if preserve_branch_spacing:
+            idpar_pre = idpar_tree(tree)
+            branch = B_tree(tree)
+            target[(target < sr) & branch & branch[idpar_pre]] = sr
+        tree = morph_tree(tree, target)
+
+    Plen = Pvec_tree(tree)
+    root = tree.root
+
+    # --- 2. insert grid points along every edge ---------------------------
+    X, Y, Z, D = (a.tolist() for a in (tree.X, tree.Y, tree.Z, tree.D))
+    # `origin` is MATLAB's `nindy`: which original node each node inherits
+    # its per-node fields (R, and D unless interpolating) from.
+    origin = list(range(N))
+    coo = tree.dA.tocoo()
+    edges = [(int(c), int(p)) for c, p in zip(coo.row, coo.col)]
+
+    rows: list[int] = []
+    cols: list[int] = []
+    n = N
+    for child, parent in edges:
+        grid = _grid_points(Plen[parent], Plen[child], sr)
+        if not grid:
+            rows.append(child)
+            cols.append(parent)
+            continue
+        span = Plen[child] - Plen[parent]
+        prev = parent
+        for g in grid:
+            rpos = (g - Plen[parent]) / span if span > 0 else 0.0
+            X.append(tree.X[parent] + rpos * (tree.X[child] - tree.X[parent]))
+            Y.append(tree.Y[parent] + rpos * (tree.Y[child] - tree.Y[parent]))
+            Z.append(tree.Z[parent] + rpos * (tree.Z[child] - tree.Z[parent]))
+            D.append(tree.D[parent] + rpos * (tree.D[child] - tree.D[parent]))
+            origin.append(child)
+            rows.append(n)
+            cols.append(prev)
+            prev = n
+            n += 1
+        rows.append(child)
+        cols.append(prev)
+
+    origin_arr = np.array(origin, dtype=int)
+    dense = Tree(
+        dA=sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n)).tocsr(),
+        X=np.array(X), Y=np.array(Y), Z=np.array(Z),
+        # Without diameter interpolation every node takes its origin node's
+        # diameter, keeping the cable piecewise-constant; with it, the
+        # interpolated values above are kept and surface/volume change.
+        D=np.array(D) if interp_diameter else tree.D[origin_arr],
+        R=tree.R[origin_arr],
+        rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
+        Ri=tree.Ri, Gm=tree.Gm, Cm=tree.Cm,
+    )
+
+    # --- 3. delete every original node but the root -----------------------
+    doomed = [i for i in range(N) if i != root]
+    result = delete_tree(dense, doomed, keep_regions=not trim_regions)
+    if isinstance(result, list):
+        raise ValueError("resample_tree: resampling disconnected the tree")
+
+    # Surviving nodes in the order delete_tree keeps them: the root, then
+    # every inserted node. This is MATLAB's `iF`, and it is what lets the
+    # collapse step ask questions of the pre-deletion tree.
+    survivors = np.array([root] + list(range(N, n)), dtype=int)
+
+    # --- 4. collapse grid-induced near-coincident branches -----------------
+    if collapse_branches:
+        result = _collapse_small_angle_branches(
+            result, dense, survivors, sr, trim_regions=trim_regions
+        )
+
+    # --- 5. length conservation -------------------------------------------
+    if conserve_length:
+        result = morph_tree(result, np.full(result.n_nodes, sr))
+
+    return result
+
+
+def _collapse_small_angle_branches(
+    pruned: Tree, dense: Tree, survivors: np.ndarray, sr: float, *, trim_regions: bool
+) -> Tree:
+    """Merge branch daughters that the resampling grid left too close together.
+
+    After the delete step a branch point's daughters can end up within a
+    fraction of ``sr`` of each other -- an artefact of snapping, not
+    anatomy. MATLAB measures each daughter pair by the summed length, *in
+    the pre-deletion tree*, of the two paths back to their branch point,
+    normalised by ``2 * sr``; below 0.75 the pair is merged to its midpoint.
+
+    Measuring in ``dense`` rather than ``pruned`` is the whole trick: the
+    pruned tree no longer contains the intermediate nodes whose lengths are
+    being summed.
+    """
+    ipar_dense = ipar_tree(dense)
+    len_dense = len_tree(dense)
+    n_children = np.asarray(pruned.dA.sum(axis=0)).ravel()
+    branch_points = np.flatnonzero(n_children > 1)
+    if len(branch_points) == 0:
+        return pruned
+
+    pairs: list[tuple[int, int]] = []
+    for bp in branch_points:
+        daughters = np.flatnonzero(
+            np.asarray(pruned.dA.getcol(bp).todense()).ravel()
+        )
+        # path (in `dense`) from each daughter back to, but excluding, `bp`
+        paths: dict[int, np.ndarray] = {}
+        for d in daughters:
+            chain = ipar_dense[survivors[d]]
+            stop = np.flatnonzero(chain == survivors[bp])
+            paths[int(d)] = chain[: stop[0]] if len(stop) else chain[chain >= 0]
+
+        for i, d1 in enumerate(daughters):
+            for d2 in daughters[i + 1:]:
+                both = np.unique(np.concatenate([paths[int(d1)], paths[int(d2)]]))
+                both = both[both >= 0]
+                if len_dense[both].sum() / (2 * sr) < 0.75:
+                    pairs.append((int(d1), int(d2)))
+
+    if not pairs:
+        return pruned
+
+    # Of each pair keep whichever node carries more of the tree and delete
+    # the other, first moving both to their midpoint so the branch point
+    # does not visibly jump.
+    subtree_size = child_tree(pruned)
+    X, Y, Z = pruned.X.copy(), pruned.Y.copy(), pruned.Z.copy()
+    dA = pruned.dA.tolil()
+    to_delete: list[int] = []
+    for d1, d2 in pairs:
+        if d1 in to_delete or d2 in to_delete:
+            continue  # already merged away by an overlapping pair
+        drop, keep = (d1, d2) if subtree_size[d1] < subtree_size[d2] else (d2, d1)
+        mx = (X[d1] + X[d2]) / 2
+        my = (Y[d1] + Y[d2]) / 2
+        mz = (Z[d1] + Z[d2]) / 2
+        X[d1] = X[d2] = mx
+        Y[d1] = Y[d2] = my
+        Z[d1] = Z[d2] = mz
+        grandchildren = np.flatnonzero(np.asarray(dA[:, drop].todense()).ravel())
+        for gc in grandchildren:
+            dA[gc, drop] = 0
+            dA[gc, keep] = 1
+        to_delete.append(drop)
+
+    merged = Tree(
+        dA=dA.tocsr(), X=X, Y=Y, Z=Z, D=pruned.D, R=pruned.R,
+        rnames=pruned.rnames, name=pruned.name, frustum=pruned.frustum,
+        Ri=pruned.Ri, Gm=pruned.Gm, Cm=pruned.Cm,
+    )
+    out = delete_tree(merged, to_delete, keep_regions=not trim_regions)
+    if isinstance(out, list):
+        raise ValueError("resample_tree: branch collapse disconnected the tree")
+    return out
 
 
 # ---------------------------------------------------------------------------

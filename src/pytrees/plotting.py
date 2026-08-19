@@ -56,6 +56,7 @@ from .graphtheory import (
     _dfs_preorder,
     idpar_tree,
 )
+from ._compat import resolve_dim
 from .metrics import tran_tree
 
 # ---------------------------------------------------------------------------
@@ -97,15 +98,52 @@ def _tree_line_mesh(tree: Tree, nodes=None, offset=(0.0, 0.0, 0.0)):
     return mesh
 
 
+def _resolve_color(color, n_nodes: int):
+    """Work out what MATLAB's polymorphic ``color`` argument means here.
+
+    MATLAB's ``plot_tree`` overloads one argument three ways, and this
+    reproduces that rather than splitting it into ``color=``/``scalars=``
+    (two parameters where one is always ``None`` is the classic sign of a
+    bad split, and the merged form is what a MATLAB user types anyway).
+
+    Returns ``(flat_color, scalars, rgb_array)`` with exactly one non-None.
+
+    The one genuine ambiguity is a **3-node tree**, where a length-3 vector
+    could be an RGB triple or three per-node values. Resolved in favour of
+    RGB, matching MATLAB; pass ``scalars=`` explicitly to override.
+    """
+    if color is None:
+        return "black", None, None
+    if isinstance(color, str):
+        return color, None, None
+
+    arr = np.asarray(color, dtype=float)
+    if arr.ndim == 2 and arr.shape == (n_nodes, 3):
+        return None, None, arr
+    if arr.ndim == 1 and arr.size == 3 and (n_nodes != 3 or arr.max() <= 1.0):
+        return tuple(arr), None, None  # an RGB triple
+    if arr.ndim == 1 and arr.size == n_nodes:
+        return None, arr, None
+    if arr.ndim == 0:
+        return None, np.full(n_nodes, float(arr)), None
+    raise ValueError(
+        f"color must be a colour name, an RGB triple, a length-{n_nodes} "
+        f"vector of values to colour-map, or an ({n_nodes}, 3) RGB array; "
+        f"got shape {arr.shape}"
+    )
+
+
 def plot_tree(
     tree: Tree,
-    color="black",
-    scalars=None,
-    cmap: str = "viridis",
-    mode: str = "tube",
-    res: int = 8,
-    nodes=None,
+    color=None,
     offset=(0.0, 0.0, 0.0),
+    nodes=None,
+    res: int = 8,
+    *,
+    mode: str = "tube",
+    cmap: str = "viridis",
+    categories: bool = False,
+    scalars=None,
     plotter=None,
     show: bool = False,
     screenshot: str | None = None,
@@ -113,43 +151,92 @@ def plot_tree(
 ):
     """Render a tree in 3D with PyVista.
 
-    ``mode="tube"`` (default) builds one diameter-tapered tube mesh for the
-    whole tree -- realistic dendrite geometry, still a single fast mesh
-    regardless of segment count. ``mode="line"`` skips tubing for a
-    faster, diameter-less preview (or genuinely huge trees where even tube
-    generation is unwanted).
+    Parameters
+    ----------
+    tree : Tree
+    color : optional
+        Follows MATLAB's overloading:
 
-    ``scalars``, if given, colors the tree by value (e.g. branch order,
-    region, any per-node metric) via ``cmap`` instead of the flat
-    ``color``. It must always be length ``tree.n_nodes`` -- the *whole*
-    tree, not just ``nodes`` -- since the underlying mesh keeps every
-    node's coordinates regardless of which are actually rendered (`nodes`
-    only selects which line cells/tube segments get built, which is where
-    the cost that matters for large trees actually is; holding every
-    node's XYZ is negligible even for huge reconstructions). Index
-    ``scalars`` yourself only if you deliberately want ``nodes``-subset
-    values to double as a *different* per-node quantity than the full
-    tree's.
+        - a colour name (``"black"``) or RGB triple ``(r, g, b)`` -- one
+          flat colour for the whole tree;
+        - a length-``n_nodes`` vector -- per-node values mapped through
+          ``cmap`` (branch order, region, path length, anything);
+        - an ``(n_nodes, 3)`` array -- an explicit RGB colour per node.
 
-    Pass an existing ``plotter`` to overlay several trees (mirrors
-    MATLAB's `hold on`); one is created if omitted, using
-    ``off_screen=not show`` for headless environments. Returns the
-    ``pyvista.Plotter``.
+        Defaults to black.
+    offset : tuple, default (0, 0, 0)
+        Translate the rendered geometry, for laying several trees out side
+        by side without moving the trees themselves. MATLAB's ``DD``.
+    nodes : array_like, optional
+        Render only these nodes' segments. MATLAB's ``ipart``.
+    res : int, default 8
+        Number of sides on each tube. MATLAB's ``res``.
+    mode : {'tube', 'line'}, keyword-only, default 'tube'
+        ``'tube'`` builds one diameter-tapered tube mesh for the whole tree
+        -- realistic geometry, still a single fast mesh however many
+        segments. ``'line'`` skips tubing for a faster, diameter-less
+        preview.
+    cmap : str, keyword-only
+        Colormap used when ``color`` is a value vector.
+    categories : bool, keyword-only, default False
+        Treat mapped values as discrete categories (e.g. region indices)
+        rather than a continuous scale.
+    scalars : array_like, keyword-only, optional
+        Explicit per-node values, overriding any interpretation of
+        ``color``. Retained for callers written against the previous
+        two-argument form, and as the escape hatch for the 3-node
+        ambiguity noted below.
+    plotter : pyvista.Plotter, keyword-only, optional
+        Draw into an existing plotter, to overlay several trees (MATLAB's
+        ``hold on``). One is created if omitted, with
+        ``off_screen=not show`` so headless environments work.
+    show, screenshot : keyword-only
+        Display the window / write a PNG.
+
+    Returns
+    -------
+    pyvista.Plotter
+
+    Notes
+    -----
+    **Positional order matches MATLAB** (``intree, color, DD, ipart, res``)
+    as of Design Decision #54, so translated code reads the same. Everything
+    this port adds beyond MATLAB's five is keyword-only, which is what keeps
+    the order matched: a future addition cannot wedge itself into a
+    positional slot.
+
+    ``scalars`` must be length ``n_nodes`` -- the *whole* tree, even when
+    ``nodes`` renders a subset -- since the mesh keeps every node's
+    coordinates regardless (``nodes`` only selects which line cells get
+    built, which is the cost that matters on large trees).
+
+    MATLAB's ``'-b'`` (flat "blatt" patches) and ``'-2q'``/``'-3q'``
+    (quiver) render modes are not reproduced: ``'-b'`` exists to dodge the
+    cost of real cylinders in MATLAB's renderer, which ``mode='tube'``
+    simply does not have, and quiver plots of a 4000-segment tree are
+    unreadable. ``'-2l'``/``'-3l'`` map onto ``mode='line'``.
     """
     if mode not in ("tube", "line"):
         raise ValueError(f"mode must be 'tube' or 'line', got {mode!r}")
 
     pv = _require_pyvista()
-    mesh = _tree_line_mesh(tree, nodes=nodes, offset=offset)
+    flat_color, mapped, rgb = _resolve_color(color, tree.n_nodes)
     if scalars is not None:
-        scalars = np.asarray(scalars)
-        if scalars.shape[0] != tree.n_nodes:
+        mapped, flat_color, rgb = np.asarray(scalars), None, None
+
+    mesh = _tree_line_mesh(tree, nodes=nodes, offset=offset)
+    if mapped is not None:
+        mapped = np.asarray(mapped)
+        if mapped.shape[0] != tree.n_nodes:
             raise ValueError(
-                f"scalars must be length tree.n_nodes ({tree.n_nodes}), not "
-                f"{scalars.shape[0]} -- it covers the whole tree even when "
-                "`nodes` selects a subset to render, see plot_tree's docstring"
+                f"per-node values must be length tree.n_nodes "
+                f"({tree.n_nodes}), not {mapped.shape[0]} -- they cover the "
+                f"whole tree even when `nodes` renders a subset, see "
+                f"plot_tree's docstring"
             )
-        mesh.point_data["scalars"] = scalars
+        mesh.point_data["scalars"] = mapped
+    elif rgb is not None:
+        mesh.point_data["rgb"] = rgb
 
     render_mesh = (
         mesh.tube(scalars="radius", absolute=True, radius=1.0, n_sides=res)
@@ -160,17 +247,20 @@ def plot_tree(
     if plotter is None:
         plotter = pv.Plotter(off_screen=not show)
 
-    if scalars is not None:
-        plotter.add_mesh(render_mesh, scalars="scalars", cmap=cmap, **mesh_kwargs)
+    if mapped is not None:
+        n_colors = len(np.unique(mapped)) if categories else 256
+        plotter.add_mesh(render_mesh, scalars="scalars", cmap=cmap,
+                         n_colors=max(n_colors, 2), **mesh_kwargs)
+    elif rgb is not None:
+        plotter.add_mesh(render_mesh, scalars="rgb", rgb=True, **mesh_kwargs)
     else:
-        plotter.add_mesh(render_mesh, color=color, **mesh_kwargs)
+        plotter.add_mesh(render_mesh, color=flat_color, **mesh_kwargs)
 
     if screenshot is not None:
         plotter.show(screenshot=screenshot) if show else plotter.screenshot(screenshot)
     elif show:
         plotter.show()
     return plotter
-
 
 def vtext_tree(
     plotter,
@@ -227,8 +317,27 @@ def pointer_tree(
     return plotter
 
 
-def chull_tree(tree: Tree, nodes=None, plotter=None, color="black", opacity: float = 0.2, dim2: bool = False):
+def chull_tree(tree: Tree, nodes=None, plotter=None, color="black",
+               opacity: float = 0.2, dim: int | None = None, *, dim2=None):
     """Convex hull around ``nodes`` (default: all).
+
+    Parameters
+    ----------
+    tree : Tree
+    nodes : array_like, optional
+        Subset of nodes to hull. Defaults to all of them.
+    plotter : pyvista.Plotter or matplotlib.axes.Axes, optional
+        If given, the hull is drawn onto it -- as a translucent surface
+        for a PyVista plotter (3D), or as a closed polyline for a
+        matplotlib Axes (2D). The object type selects which, so 2D and 3D
+        do not need two different parameters.
+    color, opacity
+        Appearance of the drawn hull.
+    dim : {2, 3}, optional
+        Default 3. ``dim=2`` hulls the XY projection, measuring enclosed
+        *area* rather than volume (Design Decision #40).
+    dim2 : bool, optional
+        **Deprecated** boolean spelling; ``dim2=True`` means ``dim=2``.
 
     Returns ``(points, scipy.spatial.ConvexHull | None)``. The hull is
     ``None`` whenever one cannot exist, which covers two cases:
@@ -241,20 +350,21 @@ def chull_tree(tree: Tree, nodes=None, plotter=None, color="black", opacity: flo
     with ``Z == 0``, and :func:`~pytrees.flatten_tree` produces a planar tree
     by construction. Returning ``None`` keeps those callable rather than
     raising a raw ``QhullError`` from deep inside SciPy. For a planar tree
-    you almost certainly want the 2D hull instead -- pass ``dim2=True``,
+    you almost certainly want the 2D hull instead -- pass ``dim=2``,
     which measures the enclosed *area*.
 
     If ``plotter`` is given (3D only), the hull surface is added to it.
     """
     from scipy.spatial import ConvexHull, QhullError
 
+    dim = resolve_dim(dim, dim2)
     nodes = np.arange(tree.n_nodes) if nodes is None else np.asarray(nodes)
     pts = (
         np.column_stack([tree.X[nodes], tree.Y[nodes]])
-        if dim2
+        if dim == 2
         else np.column_stack([tree.X[nodes], tree.Y[nodes], tree.Z[nodes]])
     )
-    min_points = 3 if dim2 else 4
+    min_points = 3 if dim == 2 else 4
     if len(pts) < min_points:
         return pts, None
 
@@ -263,11 +373,19 @@ def chull_tree(tree: Tree, nodes=None, plotter=None, color="black", opacity: flo
     except QhullError:
         # flat/collinear point set -- no hull of this dimensionality exists
         return pts, None
-    if plotter is not None and not dim2:
-        pv = _require_pyvista()
-        faces = np.hstack([[3, *simplex] for simplex in hull.simplices])
-        mesh = pv.PolyData(pts, faces)
-        plotter.add_mesh(mesh, color=color, opacity=opacity)
+    if plotter is not None:
+        if dim == 2:
+            # A 2D hull on a 3D PyVista scene is the wrong pairing, so the
+            # 2D branch draws to matplotlib instead. Previously it computed
+            # the hull and then silently drew nothing at all.
+            loop = np.append(hull.vertices, hull.vertices[0])
+            plotter.plot(pts[loop, 0], pts[loop, 1], color=color)
+            plotter.fill(pts[loop, 0], pts[loop, 1], color=color, alpha=opacity)
+        else:
+            pv = _require_pyvista()
+            faces = np.hstack([[3, *simplex] for simplex in hull.simplices])
+            mesh = pv.PolyData(pts, faces)
+            plotter.add_mesh(mesh, color=color, opacity=opacity)
     return pts, hull
 
 
@@ -277,7 +395,7 @@ def chull_tree(tree: Tree, nodes=None, plotter=None, color="black", opacity: flo
 # ---------------------------------------------------------------------------
 
 
-def plot_tree_mpl(tree: Tree, ax=None, color="black", scalars=None, cmap: str = "viridis", linewidth: float = 1.0, nodes=None):
+def plot_mpl_tree(tree: Tree, ax=None, color="black", scalars=None, cmap: str = "viridis", linewidth: float = 1.0, nodes=None):
     """Quick line-only 3D render via matplotlib (no diameter, no GPU
     acceleration -- see this module's docstring for why `plot_tree`
     (PyVista) is the recommended path for anything but a fast preview).
@@ -316,7 +434,7 @@ def plot_tree_mpl(tree: Tree, ax=None, color="black", scalars=None, cmap: str = 
     return ax
 
 
-def dA_tree_mpl(tree: Tree, ax=None):
+def dA_tree(tree: Tree, ax=None):
     """Display a tree's adjacency matrix as a sparsity image (matplotlib
     `spy`) -- a quick structural/debugging view, not anatomy."""
     import matplotlib.pyplot as plt
@@ -447,3 +565,40 @@ def spread_trees(trees: list[Tree], dx: float = 50.0, dy: float = 50.0) -> list[
     ``trees`` (via :func:`~pytrees.tran_tree`) instead of raw offsets."""
     offsets = spread_tree(trees, dx=dx, dy=dy)
     return [tran_tree(t, list(off)) for t, off in zip(trees, offsets)]
+
+
+# ---------------------------------------------------------------------------
+# deprecated aliases (Design Decision #41's naming pass; removed next release)
+# ---------------------------------------------------------------------------
+
+
+def plot_tree_mpl(*args, **kwargs):
+    """**Deprecated** alias for :func:`plot_mpl_tree`.
+
+    Renamed so it matches the ``<verb>_tree`` shape every other function in
+    the toolbox uses.
+    """
+    import warnings
+
+    warnings.warn(
+        "plot_tree_mpl is deprecated; use plot_mpl_tree",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return plot_mpl_tree(*args, **kwargs)
+
+
+def dA_tree_mpl(*args, **kwargs):
+    """**Deprecated** alias for :func:`dA_tree`.
+
+    The ``_mpl`` suffix existed to disambiguate from a PyVista counterpart
+    that does not exist -- an adjacency-matrix spy plot has no 3D form.
+    """
+    import warnings
+
+    warnings.warn(
+        "dA_tree_mpl is deprecated; use dA_tree",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return dA_tree(*args, **kwargs)

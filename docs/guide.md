@@ -17,9 +17,11 @@ Task-oriented walkthrough. Assumes you've skimmed [concepts.md](concepts.md).
 ## Loading and saving
 
 ```python
-from pytrees import load_swc, save_swc, load_mtr, load_neurolucida, sample_tree
+from pytrees import (load_swc, save_swc, load_mtr, load_neurolucida,
+                     sample_tree, hss_tree)
 
-tree  = sample_tree()                    # bundled 2252-node reconstruction
+tree  = sample_tree()                    # MATLAB's 197-node sample
+big   = hss_tree()                       # or the full 2252-node HSS cell
 tree  = load_swc("cell.swc")             # standard SWC
 cells = load_mtr("population.mtr")       # MATLAB .mtr archive
 cells = load_neurolucida("cell.ASC")     # NeuroLucida ASCII
@@ -90,7 +92,7 @@ tip_depth = plen[terminals].max()     # furthest tip, in path length
 Whole-tree summaries are just NumPy reductions over these:
 
 ```python
-total_length = len_tree(tree).sum()
+total_length = tree.total_length          # == len_tree(tree).sum()
 total_surface = surf_tree(tree).sum()
 n_branch_points = B_tree(tree).sum()
 ```
@@ -108,7 +110,9 @@ By subtree — everything downstream of a node:
 
 ```python
 from pytrees import sub_tree
-mask = sub_tree(tree, node)        # boolean mask incl. the node itself
+mask, subtree = sub_tree(tree, node)   # mask incl. the node, plus the
+                                       # subtree cut out as a real Tree
+mask = sub_tree(tree, node, with_tree=False).mask   # in a hot loop
 ```
 
 By section — the stretches between branch/termination points:
@@ -161,7 +165,7 @@ from pytrees import MST_tree, BCT_tree, soma_tree, quaddiameter_tree, jitter_tre
 import numpy as np
 
 pts = np.random.rand(300, 3) * 100
-tree, connected = MST_tree(pts[:, 0], pts[:, 1], pts[:, 2], bf=0.4)
+tree, connected = MST_tree(pts[:, 0], pts[:, 1], pts[:, 2], bf=0.4, full_output=True)[:2]
 ```
 
 > **Gotcha:** `MST_tree` is the one tree-producing function that returns a
@@ -187,7 +191,7 @@ tree = jitter_tree(tree, 1.0)    # add correlated positional noise
 ```python
 from pytrees import plot_tree, BO_tree
 
-pl = plot_tree(tree, scalars=BO_tree(tree), cmap="viridis", mode="tube")
+pl = plot_tree(tree, BO_tree(tree), cmap="viridis", mode="tube")
 pl.show()
 ```
 
@@ -205,17 +209,17 @@ For categorical data like regions, pass `categories=True` (any extra keyword
 flows through to PyVista's `add_mesh`):
 
 ```python
-plot_tree(tree, scalars=tree.R.astype(float), cmap="tab10", categories=True)
+plot_tree(tree, tree.R.astype(float), cmap="tab10", categories=True)
 ```
 
 2D and diagrams, via matplotlib:
 
 ```python
-from pytrees import plot_tree_mpl, dendrogram_tree, dA_tree_mpl
+from pytrees import plot_mpl_tree, dendrogram_tree, dA_tree
 
-plot_tree_mpl(tree)        # lighter 2D/3D line plot
+plot_mpl_tree(tree)        # lighter 2D/3D line plot
 dendrogram_tree(tree)      # abstract topology diagram
-dA_tree_mpl(tree)          # sparsity pattern of the adjacency matrix
+dA_tree(tree)          # sparsity pattern of the adjacency matrix
 ```
 
 Laying out several cells side by side:

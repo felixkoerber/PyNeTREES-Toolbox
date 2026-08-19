@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
+from pytrees.construct import _smoothbranch
 from pytrees import (
     B_tree,
     BCT_tree,
@@ -33,7 +34,6 @@ from pytrees import (
     resample_tree,
     sample_tree,
     smooth_tree,
-    smoothbranch,
     soma_tree,
     ver_tree,
 )
@@ -47,7 +47,7 @@ from pytrees import (
 def test_MST_tree_straight_line_gives_a_chain():
     X = np.array([0.0, 10.0, 20.0, 30.0])
     Y = np.zeros(4)
-    tree, connected = MST_tree(X, Y, start=0, bf=0.0, thr=100.0)
+    tree, connected = MST_tree(X, Y, start=0, bf=0.0, thr=100.0, full_output=True)[:2]
     assert np.all(connected)
     np.testing.assert_array_equal(idpar_tree(tree), [0, 0, 1, 2])
     assert ver_tree(tree, quiet=True) == []
@@ -56,7 +56,7 @@ def test_MST_tree_straight_line_gives_a_chain():
 def test_MST_tree_respects_distance_threshold():
     X = np.array([0.0, 5.0, 100.0])  # last point far beyond thr
     Y = np.zeros(3)
-    tree, connected = MST_tree(X, Y, start=0, thr=10.0)
+    tree, connected = MST_tree(X, Y, start=0, thr=10.0, full_output=True)[:2]
     assert connected.tolist() == [True, True, False]
     assert tree.n_nodes == 2
 
@@ -64,7 +64,7 @@ def test_MST_tree_respects_distance_threshold():
 def test_MST_tree_respects_max_path_length():
     X = np.array([0.0, 40.0, 80.0])  # chain would need path length 80
     Y = np.zeros(3)
-    tree, connected = MST_tree(X, Y, start=0, thr=100.0, mplen=50.0)
+    tree, connected = MST_tree(X, Y, start=0, thr=100.0, mplen=50.0, full_output=True)[:2]
     # third point (path length 80 via the chain) must be excluded
     assert connected[2] == False  # noqa: E712
     assert PL_tree(tree).max() <= 50.0 + 1e-6 or tree.n_nodes < 3
@@ -76,8 +76,8 @@ def test_MST_tree_balancing_factor_trades_wire_for_path_length():
     Y = np.concatenate([[0.0], rng.uniform(0, 400, 300)])
     Z = np.zeros(301)
 
-    tree_wire, _ = MST_tree(X, Y, Z, bf=0.0, thr=50.0)  # minimize wiring
-    tree_path, _ = MST_tree(X, Y, Z, bf=1.0, thr=50.0)  # minimize path length
+    tree_wire, _ = MST_tree(X, Y, Z, bf=0.0, thr=50.0, full_output=True)[:2]  # minimize wiring
+    tree_path, _ = MST_tree(X, Y, Z, bf=1.0, thr=50.0, full_output=True)[:2]  # minimize path length
 
     assert len_tree(tree_wire).sum() < len_tree(tree_path).sum()
     assert PL_tree(tree_wire).max() > PL_tree(tree_path).max()
@@ -87,7 +87,7 @@ def test_MST_tree_avoid_multifurcations_caps_children_at_two():
     rng = np.random.default_rng(2)
     X = np.concatenate([[0.0], rng.uniform(0, 200, 150)])
     Y = np.concatenate([[0.0], rng.uniform(0, 200, 150)])
-    tree, _ = MST_tree(X, Y, bf=0.4, thr=50.0, avoid_multifurcations=True)
+    tree, _ = MST_tree(X, Y, bf=0.4, thr=50.0, avoid_multifurcations=True, full_output=True)[:2]
     children_count = np.asarray(tree.dA.sum(axis=0)).ravel()
     assert children_count.max() <= 2
 
@@ -241,7 +241,7 @@ def test_cap_tree_no_op_when_diameter_too_small():
 
 
 # ---------------------------------------------------------------------------
-# jitter_tree / smooth_tree / smoothbranch
+# jitter_tree / smooth_tree / _smoothbranch
 # ---------------------------------------------------------------------------
 
 
@@ -263,19 +263,19 @@ def test_jitter_tree_root_never_moves_and_shape_changes():
     assert ver_tree(jittered, quiet=True) == []
 
 
-def test_smoothbranch_straightens_a_zigzag_with_full_smoothing():
+def test_private_smoothbranch_straightens_a_zigzag_with_full_smoothing():
     X = np.array([0.0, 1.0, 2.0])
     Y = np.array([0.0, 1.0, 0.0])  # zigzag peak at the midpoint
     Z = np.zeros(3)
-    Xs, Ys, Zs = smoothbranch(X, Y, Z, p=1.0, n=1)
+    Xs, Ys, Zs = _smoothbranch(X, Y, Z, p=1.0, n=1)
     # endpoints preserved, midpoint pulled fully onto the line X1-X3 (Y=0)
     assert Xs[0] == pytest.approx(0.0) and Xs[-1] == pytest.approx(2.0)
     assert Ys[1] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_smoothbranch_short_path_is_unchanged():
+def test_private_smoothbranch_short_path_is_unchanged():
     X, Y, Z = np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.zeros(2)
-    Xs, Ys, Zs = smoothbranch(X, Y, Z, p=1.0, n=3)
+    Xs, Ys, Zs = _smoothbranch(X, Y, Z, p=1.0, n=3)
     np.testing.assert_array_equal(Xs, X)
     np.testing.assert_array_equal(Ys, Y)
 

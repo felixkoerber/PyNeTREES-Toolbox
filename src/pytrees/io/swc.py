@@ -87,7 +87,7 @@ def save_swc(tree: Tree, path: str | Path) -> None:
     """
     path = Path(path)
     n = tree.n_nodes
-    parent = idpar_tree(tree, no_self=True)
+    parent = idpar_tree(tree, root_self=False)
 
     try:
         type_values = [int(name) for name in tree.rnames]

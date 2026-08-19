@@ -120,7 +120,7 @@ def test_bf_tree_clips_and_warns_when_out_of_range():
     # 1 -- deterministically forces the out-of-range clip-and-warn branch
     angles = np.linspace(0.1, 3.0, 20)
     with pytest.warns(UserWarning, match="out of usual range"):
-        bf, k = bf_tree(angles, dim="3d", params=(1e-6, 1.0, 1.0))
+        bf, k = bf_tree(angles, dim="3d", fit_constants=(1e-6, 1.0, 1.0))
     assert bf == 1.0
 
 

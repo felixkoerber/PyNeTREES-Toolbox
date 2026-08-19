@@ -42,6 +42,7 @@ __all__ = [
     "lambda_tree",
     "elen_tree",
     "cgin_tree",
+    "M_atten_tree",
     "sse_tree",
     "syn_tree",
     "loop_tree",
@@ -164,6 +165,67 @@ def sse_tree(tree: Tree, I: float | np.ndarray | None = None) -> np.ndarray:
         return np.linalg.inv(M.toarray())
     rhs = _onehot_or_array(I, N)
     return sparse_linalg.spsolve(M, rhs)
+
+
+def M_atten_tree(tree: Tree, thr: float = 0.13995) -> int:
+    """Number of electrotonically distinct compartments in a tree.
+
+    Thresholds the steady-state matrix from :func:`sse_tree` at ``thr``
+    times its maximum, giving a boolean "these two nodes see each other"
+    relation, then counts how many separate runs of nodes that relation
+    breaks the tree into. One compartment means the whole cell is
+    electrotonically compact -- current injected anywhere is felt
+    everywhere; more means the arbor behaves as several semi-independent
+    units.
+
+    Parameters
+    ----------
+    tree : Tree
+        Needs ``Ri`` and ``Gm`` set (see :func:`M_tree`).
+    thr : float, default 0.13995
+        Fraction of the largest steady-state response above which two nodes
+        count as coupled. MATLAB's default, carried over unchanged; it is
+        not derived from anything in the source, so treat it as a
+        convention rather than a principled cutoff.
+
+    Returns
+    -------
+    int
+        Compartment count, at least 1.
+
+    Notes
+    -----
+    Cost is dominated by ``sse_tree``'s full N x N inverse, so this is
+    O(n^3) and not something to sweep over a population without thought.
+
+    **MATLAB ships this function with no documentation at all** -- no header
+    comment, no description of the return value, and a stray ``clf;``
+    (clear-figure) left mid-computation. The description above is derived
+    from reading what the code does. The one behavioural difference is that
+    the stray ``clf`` is not reproduced: a metrics function should not wipe
+    the caller's current figure.
+    """
+    sse = sse_tree(tree)
+    coupled = sse > thr * sse.max()
+
+    # For each node, fill in the span between the first and last node it
+    # couples to: MATLAB does this to turn a possibly ragged coupling
+    # pattern into contiguous blocks along the (sorted) node order.
+    n = tree.n_nodes
+    blocked = np.zeros((n, n), dtype=bool)
+    for column in range(n):
+        rows = np.flatnonzero(coupled[:, column])
+        if len(rows) == 0:
+            continue
+        blocked[rows[0] : rows[-1] + 1, rows[0] : rows[-1] + 1] = True
+
+    # Count runs of nodes that fall inside some block: each maximal run is
+    # one compartment.
+    on_diagonal = np.diag(blocked).astype(int)
+    starts = np.diff(on_diagonal, prepend=0)
+    starts[starts == -1] = 0
+    runs = np.cumsum(starts) * on_diagonal
+    return int(runs.max()) + 1 if runs.size else 1
 
 
 def syn_tree(
