@@ -1,4 +1,4 @@
-"""Tests for pytrees.core: Tree construction and ver_tree validation.
+"""Tests for pynetrees.core: Tree construction and ver_tree validation.
 
 Ports the intent of treestoolbox-master/tests/IO/check_ver_tree.m (test 1:
 a well-formed tree has no issues; test 2: a mismatched-size field is flagged).
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import Tree, sample_tree, ver_tree
+from pynetrees import Tree, sample_tree, ver_tree
 
 
 def _tiny_tree() -> Tree:

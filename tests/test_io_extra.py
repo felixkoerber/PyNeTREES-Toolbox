@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pytrees import (
+from pynetrees import (
     B_tree,
     Tree,
     idpar_tree,

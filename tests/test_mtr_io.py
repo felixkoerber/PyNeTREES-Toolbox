@@ -1,4 +1,4 @@
-"""Tests for pytrees.io.load_mtr, against the real bundled Active GC Model
+"""Tests for pynetrees.io.load_mtr, against the real bundled Active GC Model
 morphology archives (MATLAB v5 .mtr files -- see io/mtr.py's module
 docstring for why this exists despite .mtr being deferred back in Phase 1).
 """
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pytrees import load_mtr, ver_tree
+from pynetrees import load_mtr, ver_tree
 
 REPO_ROOT = Path(__file__).parents[2]
 MORPHOS = REPO_ROOT / "Active GC Model" / "morphos"
@@ -56,7 +56,7 @@ def test_v73_detection_reads_the_header_not_the_exception():
     for most v7.3 files but `ValueError: embedded null character` for this
     one, having misparsed HDF5 bytes as a v5 structure.
     """
-    from pytrees.io._matlab import is_v73
+    from pynetrees.io._matlab import is_v73
 
     assert is_v73(V73_FILE)
     assert not is_v73(GC_MIDI)

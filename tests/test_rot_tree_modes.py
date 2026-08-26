@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 # mode -> (x, y, z) bounding-box extent [um] produced by MATLAB
 MATLAB_EXTENTS = {

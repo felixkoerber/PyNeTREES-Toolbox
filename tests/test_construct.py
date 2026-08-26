@@ -1,4 +1,4 @@
-"""Tests for pytrees.construct: synthetic tree generation.
+"""Tests for pynetrees.construct: synthetic tree generation.
 
 MST_tree is checked two ways: exact topology on a small deterministic
 point set (a straight line, where the greedy nearest-neighbor result is
@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees.construct import _smoothbranch
-from pytrees import (
+from pynetrees.construct import _smoothbranch
+from pynetrees import (
     B_tree,
     BCT_tree,
     MST_tree,

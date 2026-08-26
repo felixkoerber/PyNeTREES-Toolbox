@@ -1,4 +1,4 @@
-"""Tests for pytrees.electrotonics.
+"""Tests for pynetrees.electrotonics.
 
 `_cable_tree()` is a minimal, fully hand-computable fixture: a 2-node cable,
 root (D=10um) -> child (D=2um) at 100um along X, with Ri=100 Ohm*cm and
@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import (
+from pynetrees import (
     Tree,
     M_tree,
     cgin_tree,

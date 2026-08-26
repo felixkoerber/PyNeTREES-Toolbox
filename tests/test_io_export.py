@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 NML2 = "{http://www.neuroml.org/schema/neuroml2}"
 MML = "{http://morphml.org/morphml/schema}"
@@ -329,7 +329,7 @@ def test_neuroml_root_segments_have_no_parent(tree, tmp_path):
 
 
 def test_neuroml_segment_parents_follow_the_tree(tree, tmp_path):
-    from pytrees.graphtheory import idpar_tree
+    from pynetrees.graphtheory import idpar_tree
 
     root = ET.fromstring(
         pt.save_neuroml(tree, tmp_path / "cell.xml").read_text()

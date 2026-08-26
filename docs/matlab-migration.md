@@ -25,7 +25,7 @@ MATLAB uses `0` as the sentinel, which is safe only because `0` isn't a valid
 1-based index. In Python it *is* a valid index, so the port uses `-1`:
 
 ```python
-from pytrees import NO_PARENT, idpar_tree, ipar_tree   # NO_PARENT == -1
+from pynetrees import NO_PARENT, idpar_tree, ipar_tree   # NO_PARENT == -1
 
 idpar_tree(tree, root_self=False)[0]   # -1
 ipar_tree(tree)                     # padded with -1, not 0
@@ -40,7 +40,7 @@ MATLAB's `'-s'`/`'-2d'`/`'-LO'` option strings are gone entirely — the port
 uses real named parameters. (The MATLAB maintainers' own todo list documents
 that parser as a recurring source of bugs.)
 
-| MATLAB | pytrees |
+| MATLAB | pynetrees |
 |---|---|
 | `len_tree(tree, '-dim2')` | `len_tree(tree, dim=2)` |
 | `sort_tree(tree, '-LO')` | `sort_tree(tree, by="lo")` |
@@ -54,7 +54,7 @@ that parser as a recurring source of bugs.)
 
 All four MATLAB sample loaders are ported, with MATLAB's meanings:
 
-| pytrees | file | nodes | |
+| pynetrees | file | nodes | |
 |---|---|---|---|
 | `sample_tree()` | `sample.mtr` | 197 | subtree of an HSN cell |
 | `sample2_tree()` | `sample2.mtr` | 15 | minimal tree |
@@ -62,7 +62,7 @@ All four MATLAB sample loaders are ported, with MATLAB's meanings:
 | `hss_tree()` | `hss.mtr` | 2252 | full HSS cell |
 | `dLPTCs_trees()` | `dLPTCs.mtr` | 55 trees | 5 named groups, for `stats_tree` |
 
-**If you used `sample_tree()` before pytrees 0.0.2**, it returned a different
+**If you used `sample_tree()` before pynetrees 0.0.2**, it returned a different
 cell — the 2252-node HSS reconstruction, loaded from SWC, back when `.mtr`
 reading wasn't implemented. That tree is now `hss_tree()`, and in its `.mtr`
 form it also regains what SWC had stripped: its real `axon`/`dend`/`soma`
@@ -144,7 +144,7 @@ i = int(np.argmax(T_tree(tree) * PL_tree(tree)))
 
 Mostly to avoid ambiguity, since Python has no `'-s'` to disambiguate:
 
-| MATLAB | pytrees | Why |
+| MATLAB | pynetrees | Why |
 |---|---|---|
 | `dA_tree` | `dA_tree` | avoids reading as "plot the tree" |
 | `plot_tree` (matplotlib path) | `plot_mpl_tree` | `plot_tree` is the PyVista one |
@@ -192,20 +192,27 @@ Bugs found in the MATLAB original are catalogued separately in
 
 ## Not ported
 
-Briefly, with the reasoning in `PORT_STATUS.md`:
+`clone_tree`/`gscale_tree`, `hull_tree`/`vhull_tree`/`gdens_tree`/`lego_tree`,
+`convexity_tree`/`boundary_tree`/`dissectSholl_tree`/`r_mc_tree`/`M_atten_tree`,
+`BLO_tree`/`barcode_tree`, `growth_tree`/`random_tree`, `span_tree`/`theta_tree`
+and `scaleS_tree`/`scaleV_tree` were all missing here at one point; every one of
+them is ported now. What's left, with the reasoning in `PORT_STATUS.md` and the
+itemised inventory in `NOT_YET_PORTED.md`:
 
-- **`cgui_tree`** and the GUIDE GUI — build on the plotting layer instead.
-- **`clone_tree`/`gscale_tree`** population-generation pipeline — very high
-  complexity, tightly coupled to one dataset's naming conventions.
-- **`hull_tree`/`vhull_tree`/`gdens_tree`/`lego_tree`** — need density-grid
-  machinery not yet built.
-- **`convexity_tree`/`boundary_tree`/`dissectSholl_tree`/`r_mc_tree`/
-  `M_atten_tree`** — flagged buggy or purposeless upstream (`boundary_tree`
-  in fact crashes on its own documented default call).
+- **`cgui_tree`** and the GUIDE GUI — a full MATLAB GUI application; a Python
+  equivalent would be a rewrite against a different toolkit, not a port.
+- **`pov_tree`/`x3d_tree`** (POV-Ray/X3D scene export) — planned;
+  `pynetrees.blender` covers the same rendering need today.
+- **`fix_tree`/`fix_tree_UI`/`finetune_fix_tree`** — a MATLAB figure-callback
+  GUI; MATLAB's own todo list flags these as incomplete.
+- **`GC_biophys`** (the Active GC Model's active-conductance fitting) —
+  substantial, scoped separately.
 - **`parseArgs`/`isBinary`** and other MATLAB plumbing — superseded by real
   Python arguments.
-- **T2N protocol library** (IV/FI/resonance/bAP) — thin wrappers over
-  `run_current_clamp`; add on demand.
+- **T2N protocol library** (IV/FI/resonance/bAP) and its cluster/SSH execution
+  mode — thin wrappers over `run_current_clamp`; add on demand.
+- **v7.3 (HDF5) writing** for `save_tree`/`save_mtr` — the current write path
+  is MATLAB v5, capped at ~2 GB per variable.
 
 ### `plot_tree`'s `color` argument
 

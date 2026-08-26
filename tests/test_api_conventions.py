@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-import pytrees as pt
-from pytrees.core import Tree
+import pynetrees as pt
+from pynetrees.core import Tree
 
-SRC = pathlib.Path(__file__).parents[1] / "src" / "pytrees"
+SRC = pathlib.Path(__file__).parents[1] / "src" / "pynetrees"
 
 
 # ---------------------------------------------------------------------------
@@ -105,29 +105,48 @@ def test_no_source_file_unpacks_a_full_output_function_without_asking():
 
 
 # ---------------------------------------------------------------------------
-# #41 -- renamed booleans keep working for one release, with a warning
+# #67 -- the renamed parameters have no aliases at all
 # ---------------------------------------------------------------------------
+#
+# Every rename from the W1 pass shipped with a one-release deprecation shim.
+# The port has no users to keep compatible with, so the shims are gone and
+# the old spellings must fail *loudly* -- a caller who kept the old name
+# needs a TypeError, not a silently ignored keyword.
 
 
-def test_deprecated_no_self_still_works_and_warns():
-    tree = _tiny_tree()
-    with pytest.warns(DeprecationWarning, match="root_self"):
-        old = pt.idpar_tree(tree, no_self=True)
-    np.testing.assert_array_equal(old, pt.idpar_tree(tree, root_self=False))
+@pytest.mark.parametrize("call", [
+    lambda t: pt.idpar_tree(t, no_self=True),
+    lambda t: pt.elimt_tree(t, no_root=True),
+    lambda t: pt.len_tree(t, dim2=True),
+    lambda t: pt.cyl_tree(t, dim2=True),
+    lambda t: pt.chull_tree(t, dim2=True),
+])
+def test_the_old_spellings_are_gone_not_ignored(call):
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        call(_tiny_tree())
 
 
-def test_deprecated_no_root_still_works_and_warns():
-    tree = _tiny_tree()
-    with pytest.warns(DeprecationWarning, match="at_root"):
-        pt.elimt_tree(tree, no_root=True)
+def test_bf_trees_params_alias_is_gone():
+    angles = np.linspace(0.0, np.pi, 200)
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        pt.bf_tree(angles, params=(1.0, 1.0, 1.0))
 
 
-def test_new_boolean_spellings_do_not_warn():
+@pytest.mark.parametrize("name", ["plot_tree_mpl", "dA_tree_mpl", "spread_trees"])
+def test_the_renamed_functions_are_gone(name):
+    assert not hasattr(pt, name)
+    assert name not in pt.__all__
+
+
+def test_nothing_raises_a_deprecation_warning_any_more():
+    """The whole point of #67: there is no deprecated surface left."""
     tree = _tiny_tree()
     with warnings.catch_warnings():
-        warnings.simplefilter("error")
+        warnings.simplefilter("error", DeprecationWarning)
         pt.idpar_tree(tree, root_self=False)
         pt.elimt_tree(tree, at_root=False)
+        pt.len_tree(tree, dim=2)
+        pt.bf_tree(np.linspace(0.0, np.pi, 200), dim=3)
 
 
 # ---------------------------------------------------------------------------
@@ -135,18 +154,10 @@ def test_new_boolean_spellings_do_not_warn():
 # ---------------------------------------------------------------------------
 
 
-def test_dim_int_replaces_dim2_bool():
+def test_dim_takes_an_integer():
     tree = _tiny_tree()
-    np.testing.assert_allclose(pt.len_tree(tree, dim=2), pt.len_tree(tree, dim=2))
     assert len(pt.cyl_tree(tree, dim=2)) == 4
     assert len(pt.cyl_tree(tree, dim=3)) == 6
-
-
-def test_deprecated_dim2_still_works_and_warns():
-    tree = _tiny_tree()
-    with pytest.warns(DeprecationWarning, match="dim=2"):
-        old = pt.len_tree(tree, dim2=True)
-    np.testing.assert_allclose(old, pt.len_tree(tree, dim=2))
 
 
 def test_bad_dim_is_rejected_rather_than_silently_treated_as_3d():
@@ -154,21 +165,42 @@ def test_bad_dim_is_rejected_rather_than_silently_treated_as_3d():
         pt.len_tree(_tiny_tree(), dim=4)
 
 
-def test_passing_both_dim_spellings_is_an_error_not_a_preference():
-    with pytest.raises(ValueError, match="not both"):
-        pt.len_tree(_tiny_tree(), dim=2, dim2=True)
+def test_the_old_dim_strings_are_rejected():
+    with pytest.raises(ValueError, match="dim must be 2 or 3"):
+        pt.vonMises_tree(np.linspace(0.0, np.pi, 200), dim="3d")
 
 
-def test_deprecated_bf_tree_params_still_works_and_warns():
-    """MATLAB calls the three published fit constants `params`, which reads
-    like data. Renamed to `fit_constants`; the old name warns."""
-    angles = np.linspace(0.0, np.pi, 200)
-    with pytest.warns(DeprecationWarning, match="fit_constants"):
-        old = pt.bf_tree(angles, dim="3d", params=(1e-6, 1.0, 1.0))
-    assert old == pt.bf_tree(angles, dim="3d", fit_constants=(1e-6, 1.0, 1.0))
+def test_no_function_still_takes_a_dim_string():
+    """Guards the rule rather than one instance of it."""
+    import inspect
+
+    offenders = []
+    for name in pt.__all__:
+        obj = getattr(pt, name)
+        if not callable(obj) or isinstance(obj, type):
+            continue
+        try:
+            parameter = inspect.signature(obj).parameters.get("dim")
+        except (TypeError, ValueError):
+            continue
+        if parameter is not None and isinstance(parameter.default, str):
+            offenders.append(name)
+    assert not offenders, f"dim defaults to a string in: {offenders}"
 
 
-def test_bf_tree_rejects_both_spellings_at_once():
-    with pytest.raises(ValueError, match="not both"):
-        pt.bf_tree(np.linspace(0.0, np.pi, 200),
-                   fit_constants=(1.0, 1.0, 1.0), params=(1.0, 1.0, 1.0))
+def test_no_function_still_accepts_dim2():
+    """Same, for the boolean spelling."""
+    import inspect
+
+    offenders = []
+    for name in pt.__all__:
+        obj = getattr(pt, name)
+        if not callable(obj) or isinstance(obj, type):
+            continue
+        try:
+            parameters = inspect.signature(obj).parameters
+        except (TypeError, ValueError):
+            continue
+        if "dim2" in parameters:
+            offenders.append(name)
+    assert not offenders, f"dim2 still accepted by: {offenders}"

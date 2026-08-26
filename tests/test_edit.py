@@ -1,4 +1,4 @@
-"""Tests for pytrees.edit: structural editing, repair, resampling.
+"""Tests for pynetrees.edit: structural editing, repair, resampling.
 
 Also covers `abel_tree` and `rootangle_tree`, which MATLAB files under
 "metrics" but which live in `edit.py` here since they need `delete_tree`/
@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import (
+from pynetrees import (
     Tree,
     abel_tree,
     cat_tree,
@@ -91,10 +91,15 @@ def test_delete_tree_boolean_mask_and_index_list_agree():
     np.testing.assert_array_equal(by_index.dA.toarray(), by_mask.dA.toarray())
 
 
-def test_delete_tree_rejects_deleting_everything():
+def test_delete_tree_deleting_everything_gives_an_empty_tree():
+    """It used to raise. MATLAB returns an empty tree, and so does this now
+    (V2 / Design Decision #68): an empty tree is a usable value throughout
+    the port, and refusing here would make "filter a population down to the
+    cells matching X" fail on the one cell where nothing matches."""
     tree = _branchy_tree()
-    with pytest.raises(ValueError):
-        delete_tree(tree, np.ones(5, dtype=bool))
+    gone = delete_tree(tree, np.ones(5, dtype=bool))
+    assert isinstance(gone, Tree)
+    assert gone.n_nodes == 0
 
 
 def test_delete_tree_trims_unused_regions_by_default():
@@ -203,6 +208,29 @@ def test_insertp_tree_inserts_at_requested_path_lengths():
     np.testing.assert_allclose(new_X, [5.0, 15.0, 25.0])
 
 
+def test_insertp_tree_can_insert_twice_into_one_segment():
+    """Regression: the second insertion's parent is the node the first one
+    created, which does not exist in the original coordinate arrays. Reading
+    them there ran off the end -- and since the defaults insert every 10 um,
+    `insertp_tree(tree)` with no arguments crashed on any real tree."""
+    tree = _chain_tree()
+    new_tree, added = insertp_tree(tree, inode=3, plens=[2.0, 5.0, 8.0],
+                                   full_output=True)
+    assert added.sum() == 3
+    assert ver_tree(new_tree, quiet=True) == []
+    np.testing.assert_allclose(sorted(new_tree.X[added].tolist()),
+                               [2.0, 5.0, 8.0])
+
+
+def test_insertp_tree_defaults_work_on_a_real_tree():
+    """The defaults subdivide the whole root path every 10 um, which lands
+    several nodes in the same segment."""
+    tree = sample_tree()
+    result = insertp_tree(tree)
+    assert result.n_nodes > tree.n_nodes
+    assert ver_tree(result, quiet=True) == []
+
+
 def test_insertp_tree_skips_positions_that_already_exist():
     tree = _chain_tree()
     _, added = insertp_tree(tree, inode=3, plens=[10.0, 20.0], full_output=True)  # already nodes
@@ -288,7 +316,7 @@ def test_resample_tree_anchors_preserves_branch_and_terminal_count():
     """
     tree = sample_tree()
     resampled = resample_tree(tree, sr=10.0, method="anchors")
-    from pytrees import B_tree, T_tree
+    from pynetrees import B_tree, T_tree
 
     assert B_tree(resampled).sum() == B_tree(tree).sum()
     assert T_tree(resampled).sum() == T_tree(tree).sum()

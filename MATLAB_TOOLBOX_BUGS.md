@@ -398,11 +398,11 @@ Design Decision #27.
 
 | Category | Count | Typical fix in the Python port |
 |---|---|---|
-| Confirmed logic bugs | 23 | Redesigned around the bug (not replicated) |
+| Confirmed logic bugs | 30 | Redesigned around the bug (not replicated) |
 | Self-acknowledged incomplete features | 12 | Either fixed, or explicitly not ported (documented) |
 | Numerical robustness gaps | 2 | Explicit clamping / correct distance metric |
 | Performance bottlenecks (self-documented) | 2 | Vectorized / replaced with a standard algorithm + library |
-| Minor/cosmetic | 9 | N/A (informational) |
+| Minor/cosmetic | 16 | N/A (informational) |
 
 None of this is a knock on the original toolbox — `treestoolbox-master/` is
 a substantial, working, widely-used piece of scientific software, and the
@@ -812,3 +812,514 @@ Element lines are written with `fwrite (..., [..., char(13), newline])`
 (CR+LF); the `<proximal>`, `<distal>` and `</segment>` lines use `fprintf`
 with `\n` (LF). Harmless to an XML parser, but it makes the files noisy in
 version control and inconsistent with what the function evidently intends.
+
+
+---
+
+## Found while porting the generative pipeline (2026-08-20)
+
+B4: `gscale_tree`, `clone_tree`, `rpoints_tree`, `dscam_tree`,
+`spines_tree`, `PP_generator_tree`. `spines_tree` accounts for four of
+these on its own.
+
+### `spines_tree`'s documented coordinate input cannot be reached
+
+**File**: `construct/spines_tree.m:84-86`
+
+```matlab
+if     numel (pars.XYZ) == 1
+    indy         = ceil (rand (pars.XYZ, 1) * length (pars.ipart));
+elseif all   (pars.XYZ < N) % they are indices
+    indy         = pars.XYZ;
+end
+```
+
+The header documents ``XYZ`` as *"::matrix: [X Y Z] or just a number of
+spines to add"*, and the whole first paragraph of the description is about
+attaching a spine at given coordinates. But the dispatch has only two arms
+and no third:
+
+- an ``(n, 3)`` coordinate matrix whose values all happen to be smaller
+  than the node count — any cell traced near the origin — takes the
+  **indices** arm and is silently reinterpreted as node numbers;
+- an ``(n, 3)`` matrix with any value at or above the node count matches
+  neither arm, so `indy` is never assigned and the next line,
+  `dXYZ = zeros (numel (indy), 3)`, raises *Undefined function or variable
+  'indy'*.
+
+Either way the documented input does not work. Note also that the test is
+on *magnitude*, so whether a coordinate matrix is treated as coordinates or
+as indices depends on where the cell sits in space.
+
+**Python port**: dispatch is on **shape** — a 2D ``(n, 3)`` array is
+coordinates, a 1D integer array is indices, a scalar is a count — so all
+three documented forms work and none can be confused for another.
+
+### `spines_tree`'s `'-sr'` option reads an unassigned variable
+
+**File**: `construct/spines_tree.m:107-120`
+
+```matlab
+r    = find (strcmpi (tree.rnames, 'spine_neck'));
+if ~isempty (r)
+    iR (1) = r (1);
+else
+    iR (1) = max (max (tree.R), numel (tree.rnames)) + 1;
+    flag   = 1;
+end
+r          = find (strcmpi (tree.rnames, 'spine_head'));
+if ~isempty (r)
+    iR (2) = r (1);
+else
+    iR (2) = max (max (tree.R), numel (tree.rnames)) + 1 + flag;
+end
+```
+
+`flag` is assigned only in the first `else`. Call `spines_tree` with
+`'-sr'` on a tree that already has a `spine_neck` region but no
+`spine_head` — the natural case when spining a tree twice with different
+parameters — and the last line raises.
+
+### `spines_tree` returns two numbers where it documents two arrays
+
+**File**: `construct/spines_tree.m:157`, `:163`
+
+```matlab
+for counter = 1 : size (pars.XYZ, 1)
+    [tree, indneck]    = insert_tree (tree, ...
+    [tree, indhead]    = insert_tree (tree, ...
+end
+```
+
+Both are overwritten on every pass, so the function's second and third
+outputs — documented as *"node indices of spine heads"* and *"of spine
+necks"* — are the indices of the **last spine only**. Anything wanting to
+select the spines afterwards has to recompute them from the region labels.
+
+**Python port**: `spines_tree(..., full_output=True)` returns the complete
+arrays.
+
+### `spines_tree` puts the head on the wrong side of a negative-length neck
+
+**File**: `construct/spines_tree.m:100-104`, `:163-168`
+
+The neck offset is `randn * stdlneck + mlneck` — a normal draw, which at
+the function's own defaults (mean 1, standard deviation 1) is **negative
+about 16% of the time**. The head is then placed unconditionally at
+`XYZ + dXYZ * dhead`, i.e. always on the `+dXYZ` side. So for those spines
+the neck points one way from the dendrite and the head the other: the head
+lands between the neck and the cable, or inside the cable itself. Surface
+area and any spine-head distance measured off such a tree are wrong.
+
+**Python port**: the *direction* is flipped when the draw comes out
+negative, not the length. Since the direction is uniformly random around
+the cable to begin with, that is distributionally identical and leaves the
+head beyond the neck. A test asserts head and neck are collinear and
+pointing the same way for every spine.
+
+### Minor: `spines_tree`'s region index is a vector, not a scalar
+
+**File**: `construct/spines_tree.m:126`, `:131`
+
+```matlab
+iR     = max (tree.R,numel (tree.rnames)) + 1;
+```
+
+Two-argument `max` in MATLAB is **elementwise**, so this returns a vector
+as long as `tree.R`, not the intended scalar. The `'-sr'` branch twelve
+lines above writes `max (max (tree.R), numel (tree.rnames))`, which is
+correct. The consequence is masked — `numel (iR) == 1` is then false, the
+`iR (2) = iR (1)` fallback is skipped, and `iR (1)` happens to hold the
+right value whenever `numel (rnames) >= R (1)` — so it works by accident on
+ordinary trees.
+
+### `gscale_tree` deletes empty regions by an index that shifts underneath it
+
+**File**: `construct/gscale_tree.m:207-217`
+
+```matlab
+emptyregion      = find (dR);
+for counterR     = 1 : length (emptyregion)
+    spanning.regions (emptyregion (counterR)) = [];
+    ...
+```
+
+`emptyregion` holds ascending indices into the original list, but each
+deletion shifts everything after it down by one. With one empty region this
+is correct; with two or more, the second deletion removes the wrong entry —
+and with the last region empty, it can index past the end. A group whose
+cells declare two or more region names that no node uses is enough to
+trigger it, and the bundled `dLPTCs.mtr` is one region name away from it
+already (all fifteen cells declare a `soma` region that no node is assigned
+to).
+
+**Python port**: unused regions are simply never added, so there is nothing
+to delete.
+
+### Minor: `gscale_tree`'s two outputs rescale about different centres
+
+**File**: `construct/gscale_tree.m:271-283`
+
+```matlab
+spanning.X{r}{t} = xmass + mxdiff * (Xpre - xmass) / diff (xlims);   % points
+ctrees{t}.X(iR)  =         mxdiff *  ctrees{t}.X(iR) / diff (xlims); % trees
+```
+
+The rescaled **point cloud** is scaled about the region's own centre of
+mass, so that centre stays put; the rescaled **tree** is scaled about the
+origin, i.e. the root. Both are returned from the same call as though they
+were the same rescaling, and they are not — a region's points will not
+coincide with the same region of the corresponding scaled tree. It looks
+deliberate (the point cloud is the density target, the trees are for
+display), so the port keeps it, but the docstring says so out loud.
+
+### `PP_generator_tree` can loop forever
+
+**File**: `construct/PP_generator_tree.m:155`, `:304`
+
+```matlab
+while ((Ract < pars.R - 0.01) || (Ract > pars.R + 0.01))
+```
+
+No iteration bound, in either of the function's two copies of the search.
+Many targets are simply unreachable — R is capped by how tightly the
+exclusion zone and the fixed 200 um box let the points pack — and asking
+for one hangs MATLAB with no output and no way to tell whether it is
+converging. (`'-e'` echoes the current and target R each pass, which is the
+only reason this is survivable in practice.)
+
+**Python port**: `max_iter=200` by default, and giving up raises a
+`UserWarning` naming the R actually reached.
+
+### Minor: `dscam_tree` can pick a partner it just excluded
+
+**File**: `construct/dscam_tree.m:75`
+
+```matlab
+iClose       = find (distance == min (distance (iVector)));
+iClose       = iClose (1);
+```
+
+The minimum is taken over the eligible nodes, but the `find` that locates
+it searches the **whole** distance vector. If an excluded node — an
+ancestor of the start node, or one inside its own subtree — sits at exactly
+that distance and comes first, it is selected instead, and the branch is
+moved toward a part of itself. Exact ties are not as rare as they look
+here: `iVector` excludes everything within 2 um, so the surviving distances
+cluster tightly around that cutoff.
+
+**Python port**: the partner is taken from the masked set directly.
+
+
+---
+
+## Found while porting the last plot helpers (2026-08-20)
+
+### `xplore_tree` labels regions by loop position, not by region value
+
+**File**: `graphical/xplore_tree.m:73-80`
+
+```matlab
+uR           = unique (tree.R);
+for counter  = 1 : length(uR)
+    if isfield   (tree, 'rnames')
+        rname    = tree.rnames {counter};
+    ...
+    iR       = find (tree.R == uR (counter));
+```
+
+The region being drawn is `uR (counter)`, but the name written next to it
+is `rnames {counter}` -- the *position in the loop*, not the region's own
+value. The two coincide only when the regions in use are exactly
+`1 : length (uR)`. Any tree that has had a region deleted, or that uses
+region 2 without using region 1 -- which is what
+`delete_tree`/`sub_tree`/an SWC import with non-contiguous type codes all
+produce -- gets its labels attached to the wrong regions, silently, in a
+figure whose entire purpose is to tell you which region is which.
+
+**Python port**: `xplore_tree(tree, mode="regions")` indexes `rnames` by
+the region value.
+
+### Minor: `plotsect_tree` draws nothing when the path is not directed
+
+**File**: `graphical/plotsect_tree.m:63-65`
+
+```matlab
+indy = pars.ipar (pars.sect (1, 2), ...
+    1 : find (pars.ipar (pars.sect (1, 2), :) == pars.sect (1, 1)));
+```
+
+The docstring requires *"a directed path away from the root"*. When the
+start node is not actually an ancestor of the end node, `find` returns
+empty, `1 : []` is an empty range, and the function plots an empty line and
+returns normally. The caller gets a figure with nothing added to it and no
+indication of why.
+
+**Python port**: raises, naming both nodes.
+
+
+---
+
+## Found while porting the image stacks (2026-08-20)
+
+### `fitD_stack` measures every diameter at one point, and says so itself
+
+**File**: `stacks/fitD_stack.m:124-126`
+
+```matlab
+% TODO, CRITICAL: RIGHT NOW ONLY THE TERMINAL POINT IS TAKEN
+mPX          = [(P1 (1) + cV (1)) (P1 (1) + cV (1)) (P2 (1))];
+mPY          = [(P1 (2) + cV (2)) (P1 (2) + cV (2)) (P2 (2))];
+```
+
+Three sampling positions along the segment are constructed, and all three
+are the same point: `cV` is `P2 - P1`, so `P1 + cV` **is** `P2`, and the
+third entry is `P2` outright. Every diameter is therefore read from a
+perpendicular profile at the segment's far end rather than along the cable
+the surrounding code was written to traverse -- the sampling grid it builds
+next, `repmat (mPX, 2 * maxR + 1, 1)`, has three identical columns.
+
+The author flagged it. It is listed here because the comment is inside the
+function and nothing in its documentation or its output says the
+measurement is single-point.
+
+**Python port**: `fitD_stack(..., samples=5)` spreads the positions along
+the segment as intended; `samples=1` reproduces MATLAB.
+
+Worth adding, because measuring it contradicted the expectation: averaging
+along a segment is **not** automatically less noisy. Near a branch point
+the perpendicular profile picks up the *sibling* branch, and on a clean
+synthetic phantom the single-point measurement came out the *less* variable
+of the two (spread 1.2 against 1.8 voxels). The defect is that the code
+does not do what it says, not that its number is necessarily worse.
+
+### Minor: `fitD_stack` returns voxels where the caller expects microns
+
+**File**: `stacks/fitD_stack.m:175, :179`
+
+```matlab
+d            = (m_2 - m_1);
+...
+D (counter)  = d;
+```
+
+`m_1` and `m_2` are indices into a profile sampled at one-voxel steps along
+the perpendicular, so `d` is a width in **voxels**. It is returned as `D`,
+whose only use is to be assigned to `tree.D` -- a field in **microns**
+everywhere else in the toolbox, and the field every length, surface and
+volume function reads. The two agree only when the in-plane voxel happens
+to be 1 um across, which is common enough for the mismatch to go unnoticed
+and wrong enough to matter on any other acquisition.
+
+**Python port**: the width is scaled by the length of one sampling step in
+microns, which is exact even for anisotropic voxels.
+
+### Minor: `skel_stack`'s default threshold is a fixed voxel count
+
+**File**: `stacks/skel_stack.m:50-55`
+
+```matlab
+c        = histax (reshape (double (iM), numel (iM), 1), ...);
+cc       = cumsum (flipud (c));
+ic       = find (cc > 30000, 1);
+thr      = (99 - ic) * double ((maxM - minM) / 99) + minM;
+```
+
+The default threshold is whatever intensity leaves roughly **30000 voxels**
+above it. That is an absolute count, not a fraction, so it means something
+different for every stack size: on a small crop it keeps most of the
+volume, on a large one a thin sliver of the brightest cable. Nothing in the
+documentation mentions it, and the threshold is the single parameter that
+decides what the reconstruction sees.
+
+**Python port**: Otsu's method by default -- documented, reproducible, and
+scale-free -- with an explicit `thr` still available.
+
+### Minor: `fitD_stack`'s two edge indices are offset by one
+
+**File**: `stacks/fitD_stack.m:172-173`
+
+```matlab
+m_1          = max (q (find (q < 0))) +  i_max;
+m_2          = min (q (find (q > 0))) + (i_max - 1);
+```
+
+Both come from the same `diff`-shortened array and both are re-anchored to
+`i_max`, but one gets `i_max` and the other `i_max - 1`, so every width is
+one sampling step narrower than the gap between the edges it found. It
+comes from `diff` shortening the array by one and being corrected on only
+one side.
+
+**Python port**: reproduced, deliberately. A sub-voxel systematic offset in
+an already-approximate measurement is not worth silently moving numbers
+people have published over; it is noted in `fitD_stack`'s docstring.
+
+## Found while porting the persistence functions (2026-08-26)
+
+### `BLO_tree` orders branches by node count, not by length
+
+**File**: `graphtheory/BLO_tree.m:75`
+
+The function is called *branch **length** order*, its header says it
+"returns the primary branches by longest first", and its `V` argument is
+documented as "values to be integrated to select longest path". It selects
+with:
+
+```matlab
+[~, i2]      = max (sum (V0 (ipar + 1) > 0, 2));
+```
+
+`sum (... > 0, 2)` **counts** the path nodes carrying a positive value. It
+never sums `V`. Two things follow, both measured against the toolbox's own
+bundled trees:
+
+- **Branch 1 is the path with the most nodes, not the longest path.** On
+  `hsn` MATLAB's first branch ends 319.5 um from the root while the
+  furthest tip is at 648.4 um — less than halfway.
+- **`V` selects nothing.** Any strictly positive `V` gives a bit-identical
+  ordering, so passing `eucl_tree`, `ones` or `len_tree` changes only the
+  lengths reported, never the decomposition. The documented meta-function
+  behaviour does not exist.
+
+The two rules disagree about where **69% to 97%** of nodes belong
+(`sample` 69%, `hss` 81%, `hsn` 97%), so this is not a tie-breaking
+detail. It propagates into `barcode_tree`, `persistenceimage_tree` and
+`realisations_tree`, which are all built on the ordering.
+
+Whether the count rule is *worse* is a separate question this port does not
+claim to have settled: resampling each bundled tree to 1 um and comparing
+barcodes, the count-based ordering was, if anything, the more stable of the
+two. It is simply not what the function says it does.
+
+**Python port**: `BLO_tree(..., by="nodes")` is the default and reproduces
+MATLAB exactly, node for node, so barcodes and published analyses
+reproduce. `by="length"` maximises accumulated `v`, which is what the name
+and documentation describe. Both are documented in the function's Notes.
+
+### Minor: `persistenceimage_tree` counts coincident bars once
+
+**File**: `graphtheory/persistenceimage_tree.m:82`
+
+```matlab
+M (sub2ind (size (M), round (death), round (birth) + 1)) = 1;
+```
+
+Assignment, not accumulation, so any number of branches whose births and
+deaths round to the same micron contribute a single 1 between them. The
+published method (Kanari et al., 2018) sums one kernel per bar. Across the
+55 cells in `dLPTCs.mtr` this silently drops a median of **1.5% of bars,
+at worst 4.0%**, and it falls hardest on the densely branched cells — the
+ones a density image exists to tell apart.
+
+**Python port**: accumulates by default; `accumulate=False` reproduces
+MATLAB's figures exactly.
+
+### Minor: `persistenceimage_tree` offsets its two axes differently
+
+**File**: `graphtheory/persistenceimage_tree.m:82`
+
+`round (death)` against `round (birth) + 1` — the same coordinate treated
+two ways, which shifts the whole image one pixel off the diagonal it is
+plotted against. Invisible under the 17.5 um kernel and identical for every
+cell, so it changes no comparison; it matters only if coordinates are read
+off the image.
+
+**Python port**: both axes share an origin.
+
+### Minor: `BLO_tree` loops forever on a tree whose remaining segments are all zero-length
+
+**File**: `graphtheory/BLO_tree.m:74-85`
+
+When every remaining path scores zero, `max` returns row 1. If node 1 has
+already been consumed its row is all zeros, `branch` comes back empty,
+`ipar (ismember (ipar, branch)) = 0` changes nothing, and the `while` loop
+never terminates.
+
+**Verified by running it**, not by reading it. Four nodes are enough: a
+chain `1 -> 2 -> 3` plus a node 4 duplicating node 3's coordinates
+exactly, which any reconstruction containing a repeated point produces.
+`len_tree` is `[0 10 10 0]`. Step 1 takes the branch `[3 2 1]` and zeroes
+it; node 4's row is then `[4 0 0 0]`, which keeps `sum (sum (ipar))`
+non-zero, but node 4 carries `V = 0` so every row now scores 0, `max`
+returns row 1, and row 1 is already empty:
+
+```
+  step 1: picked row 3, branch = [3 2 1]
+  step 2: picked row 1, branch = []
+  -> branch is empty; nothing gets zeroed this iteration
+  ... identical forever
+```
+
+Since `barcode_tree`, `persistenceimage_tree` and `realisations_tree` all
+call it, they hang too.
+
+**Python port**: the decomposition is driven by a frontier of unassigned
+branch heads rather than by rescanning `ipar`, so it terminates by
+construction — there is no state in which it has work left and cannot make
+progress. On the tree above it returns `order = [1 1 1 2]`, giving the
+zero-length tip its own empty bar `[20, 20]`, which is the right answer:
+the branch exists and has no length.
+
+## Found while porting the space-filling functions (2026-08-26)
+
+### `theta_tree` returns a bin index where a distance is meant
+
+**File**: `metrics/theta_tree.m:47-50`
+
+```matlab
+xax   = 0 : ceil  (max   (hB));
+y     = cumsum    (histax (hB, xax));
+theta = find      (y > 0.9069 * S, 1, 'first');
+```
+
+`find` returns a **1-based position** in `xax`, and `xax` starts at 0, so
+the value returned is one micron larger than the radius it stands for. The
+function then uses it as a distance — the `'-s'` branch thresholds the real
+distance map with `BW < theta` and contours it — so the plot is drawn one
+micron out too. Writing `xax (find (...))` would have been the fix.
+
+Verified against MATLAB's own code under Octave: on `sample` it returns
+**10** where the covering radius is **9 um**, and on `sample2` **7** where
+it is **6 um**.
+
+The absolute error is a fixed 1 um, so it hurts most exactly where theta is
+smallest — a finely space-filling arbor with theta near 5 um is overstated
+by 20%.
+
+**Python port**: returns the distance, 9 and 6 respectively. Everything else
+in the function agrees with MATLAB pixel for pixel.
+
+### Minor: `span_tree` closes with an approximate disk
+
+**File**: `metrics/span_tree.m:83`
+
+```matlab
+se = strel ('disk', radius, 4); % resolution
+```
+
+The third argument makes `strel` approximate the disk with four periodic
+lines — an octagon, not a circle — which is a speed trade MATLAB offers and
+which changes the spanned area slightly.
+
+**Python port**: uses the exact Euclidean disk. **The size of the
+difference is not measured here**: Octave implements only `N = 0`, so there
+was no approximate disk to compare against, and constructing a guess at
+MATLAB's octagon would produce a number rather than a measurement. With the
+exact disk on both sides, the port reproduces MATLAB's mask and area
+exactly (`sample` 343x343, 7064 um^2; `sample2` 181x181, 554 um^2).
+
+### Minor: a debug `disp` left in `histax`
+
+**File**: `graphtheory/utilities/histax.m:8`
+
+```matlab
+disp(size(xax)), disp(xax)
+```
+
+One of the two copies of `histax` in the toolbox prints its entire bin
+vector to the console on every call. `theta_tree` calls it once per tree,
+so a loop over a population fills the console with hundreds of lines. The
+copy in `utilities/` does not have it, so which one runs depends on path
+order.
+
+**Python port**: not applicable — binning is `np.histogram`.

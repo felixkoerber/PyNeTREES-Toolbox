@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-import pytrees as pt
+import pynetrees as pt
 
 
 @pytest.fixture

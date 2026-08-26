@@ -19,7 +19,7 @@ import pytest
 from scipy.integrate import trapezoid
 from scipy.sparse import csr_matrix
 
-import pytrees as pt
+import pynetrees as pt
 
 
 @pytest.fixture(scope="module")
@@ -150,7 +150,7 @@ def test_uniform_sampling_really_is_uniform():
     """The sampler draws from the boundary's simplex decomposition rather
     than rejecting bounding-box points, so it is worth checking directly
     that it has not acquired a bias towards, say, small simplices."""
-    from pytrees.density import _alpha_shape, _sample_in_simplices
+    from pynetrees.density import _alpha_shape, _sample_in_simplices
 
     rng = np.random.default_rng(0)
     corners = np.array(np.meshgrid([0.0, 1.0], [0.0, 1.0], [0.0, 1.0])).reshape(3, -1).T
@@ -226,7 +226,7 @@ def test_the_centripetal_fit_reports_its_parameters(tree):
     assert result.k > 0
     assert 0.0 <= result.bf <= 1.0
     assert result.rootangle is not None
-    assert (result.bf, result.k) == pt.bf_tree(result.rootangle, dim="3d")
+    assert (result.bf, result.k) == pt.bf_tree(result.rootangle, dim=3)
 
 
 def test_the_estimated_scale_approximates_the_measured_one(tree):

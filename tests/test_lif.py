@@ -1,4 +1,4 @@
-"""Tests for pytrees.electrotonics.LIF_tree / AdExLIF_tree.
+"""Tests for pynetrees.electrotonics.LIF_tree / AdExLIF_tree.
 
 The passive (sub-threshold, thr set unreachably high) case is cross-checked
 against an independent dense implicit-Euler stepper written directly in the
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import AdExLIF_tree, LIF_tree, M_tree, Tree, surf_tree
+from pynetrees import AdExLIF_tree, LIF_tree, M_tree, Tree, surf_tree
 
 
 def _cable_tree() -> Tree:

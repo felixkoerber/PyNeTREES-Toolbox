@@ -1,4 +1,4 @@
-"""Tests for pytrees.metrics: coordinate-based metrics and transforms.
+"""Tests for pynetrees.metrics: coordinate-based metrics and transforms.
 
 Hand-verified against a small fixed tree (`_geom_tree`), same topology as
 graphtheory's `_branchy_tree` (0 -> {1, 2}, 1 -> {3, 4}) but with real 3D
@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import (
+from pynetrees import (
     Tree,
     angleB_tree,
     bin_tree,

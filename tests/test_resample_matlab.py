@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 # case -> (kwargs, expected n_nodes, expected total length [um])
 MATLAB_REFERENCE = {

@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 
 EXPECTED = {
@@ -75,7 +75,7 @@ def test_dLPTCs_population_has_all_five_groups():
 
 def test_dLPTCs_feeds_stats_tree_directly():
     """The reason this fixture was worth unblocking at all."""
-    from pytrees._matlab_groups import group_arrays
+    from pynetrees._matlab_groups import group_arrays
 
     groups = pt.dLPTCs_trees()
     # one tree per group keeps the test quick; the shape is what's under test

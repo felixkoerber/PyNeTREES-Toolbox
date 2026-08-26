@@ -1,4 +1,4 @@
-"""Tests for pytrees.io.swc: SWC reading and writing.
+"""Tests for pynetrees.io.swc: SWC reading and writing.
 
 Ports the intent of treestoolbox-master/tests/IO/check_swc_tree.m and
 check_load_tree.m: load a real reconstruction, verify it's well-formed, and
@@ -11,8 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pytrees import Tree, ver_tree
-from pytrees.io import load_swc, save_swc
+from pynetrees import Tree, ver_tree
+from pynetrees.io import load_swc, save_swc
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

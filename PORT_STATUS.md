@@ -12,8 +12,8 @@ Status values: `done` · `in-progress` · `not-started` · `deferred` (intention
 
 | Item | Status | Notes |
 |---|---|---|
-| `pyproject.toml` (package `pytrees`, src layout) | done | numpy/scipy core deps; pytest dev dep |
-| `src/pytrees/__init__.py` | done | |
+| `pyproject.toml` (package `pynetrees`, src layout) | done | numpy/scipy core deps; pytest dev dep |
+| `src/pynetrees/__init__.py` | done | |
 | `tests/` + pytest config | done | |
 | Fixture data copied from MATLAB `sample/swc`, `tests/IO/test files` | done | `25HSS.swc`, `test02.swc` |
 
@@ -21,19 +21,19 @@ Status values: `done` · `in-progress` · `not-started` · `deferred` (intention
 
 | Item (MATLAB origin) | Status | Notes |
 |---|---|---|
-| `Tree` class (tree struct) | done | `src/pytrees/core.py`; 0-based indices, `-1` no-parent sentinel (see Design Decisions) |
+| `Tree` class (tree struct) | done | `src/pynetrees/core.py`; 0-based indices, `-1` no-parent sentinel (see Design Decisions) |
 | `ver_tree` → `ver_tree()` / `Tree.validate()` | done | non-raising, warning-collecting, matches MATLAB semantics |
 | `load_tree`/`swc_tree` (read) → `load_swc()` | done | handles unsorted/non-contiguous indices and multi-root files (`test02.swc`); does **not** yet call `repair_tree` (deferred — Phase 4) |
 | `swc_tree` (write) → `save_swc()` | done | minimal writer, round-trips `load_swc` |
 | `sample_tree` → `sample_tree()` | done | loads bundled `25HSS.swc` fixture |
 | Test suite (12 tests, `pytest`) | done | `Tree`/`ver_tree` checks, single-root + multi-root + unsorted-index SWC loading, write/read round-trip, malformed-file rejection — all green |
 | `repair_tree` full port (elimt/elim0/sort) | deferred | Phase 4 |
-| `.mtr` (MATLAB binary) support | done | landed post-Phase-7 as `src/pytrees/io/mtr.py`'s `load_mtr`, once the bundled `Active GC Model/morphos/*.mtr` granule-cell reconstructions gave a concrete reason (see Design Decision #32). MATLAB v5 (`scipy.io.loadmat`) only -- v7.3/HDF5 `.mtr` files raise a clear error naming the file, rather than being silently unsupported |
+| `.mtr` (MATLAB binary) support | done | landed post-Phase-7 as `src/pynetrees/io/mtr.py`'s `load_mtr`, once the bundled `Active GC Model/morphos/*.mtr` granule-cell reconstructions gave a concrete reason (see Design Decision #32). MATLAB v5 (`scipy.io.loadmat`) only -- v7.3/HDF5 `.mtr` files raise a clear error naming the file, rather than being silently unsupported |
 | `.neu` / `.nmf` support | deferred | niche formats (NEURON hoc transfer, HDF5 swc-extension); lower priority than `.swc`/NeuroLucida |
 
 ## Phase 2 — Graph primitives (`dA` only)
 
-`src/pytrees/graphtheory.py`, tested in `tests/test_graphtheory.py` (36 tests total in
+`src/pynetrees/graphtheory.py`, tested in `tests/test_graphtheory.py` (36 tests total in
 the suite, including a full smoke-test of every function below against the real
 2252-node bundled reconstruction — see Design Decisions for details on what that
 surfaced).
@@ -66,7 +66,7 @@ surfaced).
 
 ## Phase 3 — Coordinate-based metrics
 
-`src/pytrees/metrics.py`, tested in `tests/test_metrics.py` (59 tests total in the
+`src/pynetrees/metrics.py`, tested in `tests/test_metrics.py` (59 tests total in the
 suite now, plus a manual smoke-test of every function against the real 2252-node
 bundled reconstruction — see Design Decisions #17/#18 for what that surfaced).
 
@@ -93,7 +93,7 @@ bundled reconstruction — see Design Decisions #17/#18 for what that surfaced).
 
 ## Phase 4 — Edit operations
 
-`src/pytrees/edit.py`, tested in `tests/test_edit.py` (96 tests total in the suite
+`src/pynetrees/edit.py`, tested in `tests/test_edit.py` (96 tests total in the suite
 now, plus a timed smoke-test of every function below against the real 2252-node
 bundled reconstruction — all well under a second; see Design Decisions #21-24).
 This phase also unblocked four Phase 2/3 backlog items — see those phases' tables.
@@ -126,7 +126,7 @@ This phase also unblocked four Phase 2/3 backlog items — see those phases' tab
 
 ## Phase 5 — Full I/O
 
-`src/pytrees/io/{swc,neurolucida,native}.py`, tested in `tests/test_io_extra.py`
+`src/pynetrees/io/{swc,neurolucida,native}.py`, tested in `tests/test_io_extra.py`
 (104 tests total in the suite now) plus the existing `tests/test_swc_io.py`.
 
 | MATLAB function | Status | Notes |
@@ -141,7 +141,7 @@ This phase also unblocked four Phase 2/3 backlog items — see those phases' tab
 
 ## Phase 6 — Construct (synthetic trees)
 
-`src/pytrees/construct.py`, tested in `tests/test_construct.py` (130 tests total in
+`src/pynetrees/construct.py`, tested in `tests/test_construct.py` (130 tests total in
 the suite now, plus manual smoke-testing of `MST_tree` on random 300-1000-point
 clouds — see Design Decision #27 for the balancing-factor sanity check that gave
 real confidence the ported cost function is correct, not just "runs without error").
@@ -171,9 +171,9 @@ primary 3D engine (`plot_tree`, `vtext_tree`, `pointer_tree`, `chull_tree`,
 added to `pyproject.toml`'s `plot` extra alongside `matplotlib`); `matplotlib`
 provides a lighter `plot_tree_mpl` fallback plus the inherently-2D
 `dendrogram_tree`/`dA_tree_mpl`. Both are optional, lazily imported inside
-each function — `import pytrees` never requires either.
+each function — `import pynetrees` never requires either.
 
-`src/pytrees/plotting.py`, tested in `tests/test_plotting.py` (150 tests total
+`src/pynetrees/plotting.py`, tested in `tests/test_plotting.py` (150 tests total
 in the suite now). PyVista tests run headless (`off_screen=True`, the default)
 and were also manually verified by rendering to PNG and visually inspecting the
 bundled reconstruction (tube mesh generation ~0.17s, full off-screen render
@@ -196,7 +196,7 @@ bundled reconstruction (tube mesh generation ~0.17s, full off-screen render
 
 ## Phase 8 — Electrotonics
 
-`src/pytrees/electrotonics.py`, tested in `tests/test_electrotonics.py` (19
+`src/pynetrees/electrotonics.py`, tested in `tests/test_electrotonics.py` (19
 tests: hand-computed exact values on a minimal 2-node cable fixture, plus
 property-based checks — Kirchhoff zero-row-sum, `M @ sse_tree(tree) == I` —
 on the real bundled 2252-node reconstruction) and `tests/test_lif.py` (7
@@ -220,7 +220,7 @@ for the supra-threshold case). Required new `Tree.Ri`/
 
 ## Phase 9 — Stats & comparison
 
-`src/pytrees/stats.py`, tested in `tests/test_stats.py` (15 tests: hand-
+`src/pynetrees/stats.py`, tested in `tests/test_stats.py` (15 tests: hand-
 verified sholl/summary-statistic values on small fixed fixtures, plus
 cross-checks — e.g. `syn_tree`/`sse_tree`-style consistency, pooling
 identical distributions, a forced out-of-range `bf_tree` clip). New
@@ -248,7 +248,7 @@ core dependency: `pandas` (see Design Decision #35).
 
 ## Phase 11 — T2N + NEURON integration
 
-`src/pytrees/neuron_bridge.py`, tested in `tests/test_neuron_bridge.py` (9
+`src/pynetrees/neuron_bridge.py`, tested in `tests/test_neuron_bridge.py` (9
 tests, skipped if `neuron` isn't importable). Requires the real `neuron`
 package -- no Windows pip wheel exists, so this was gated on the user
 installing NEURON's official Windows binary installer first (confirmed
@@ -375,7 +375,7 @@ Dated, append-only. Each entry: what was decided, why, and what it changes going
 
 ### 2026-07-30 — Phase 0/1 kickoff
 
-1. **Package name**: `pytrees`, installable from `python_port/` (src layout). Chosen for
+1. **Package name**: `pynetrees`, installable from `python_port/` (src layout). Chosen for
    brevity and direct lineage from "TREES toolbox"; easy to rename later since nothing
    external depends on it yet.
 2. **Don't port the options-string parser** (`'-s'`, `'-z'`, ...). Use explicit typed
@@ -766,7 +766,7 @@ Dated, append-only. Each entry: what was decided, why, and what it changes going
     secondary option (`plot_tree_mpl`) for quick previews or environments
     without a VTK-capable display -- not a peer to `plot_tree`. Both are
     optional extras, imported lazily inside each function that needs them,
-    so `import pytrees` never requires either (verified: the whole test
+    so `import pynetrees` never requires either (verified: the whole test
     suite, including every plotting test, imports and runs with `pyvista`
     installed but would `pytest.importorskip` cleanly without it).
     Off-screen/headless rendering was verified working in this environment
@@ -1149,7 +1149,7 @@ Dated, append-only. Each entry: what was decided, why, and what it changes going
       Not a bug, but easy to trip over — now called out in `docs/guide.md`
       and in the electrotonics notebook.
     - Docs are checked against the code (a scratch script verified every
-      backticked function name in `docs/` exists in `pytrees.__all__`, and
+      backticked function name in `docs/` exists in `pynetrees.__all__`, and
       that all 108 public symbols are mentioned somewhere).
 
 ### 2026-08-18 — review response W1/W2/W4/W7 (see `REVIEW_PLAN.md`)
@@ -1174,7 +1174,7 @@ signature cleanup), W2 (I/O parity), W4 (return-value contract) and W7
     flipped so behaviour is unchanged. Reason: a default of `no_self=False`
     makes the reader resolve a double negative to work out what happens.
     Both retired spellings still work for one release via
-    `pytrees/_compat.py`, raising `DeprecationWarning` -- verified against
+    `pynetrees/_compat.py`, raising `DeprecationWarning` -- verified against
     `gc_model`, which was still calling `no_self=True` and kept working.
 42. **Multi-output functions return their primary result only; extras are
     opted into with `full_output=True`.** Applies to `sort_tree`,
@@ -1303,7 +1303,7 @@ signature cleanup), W2 (I/O parity), W4 (return-value contract) and W7
     source** (`edit/resample_tree.m` run in Octave 11 on the 197-node
     `sample_tree`), across five option combinations:
 
-    | case | MATLAB | pytrees |
+    | case | MATLAB | pynetrees |
     |---|---|---|
     | default, sr=10 | 78 nodes, 724.5606 um | identical |
     | sr=5 | 155 nodes, 753.8981 um | identical |
@@ -1683,3 +1683,547 @@ signature cleanup), W2 (I/O parity), W4 (return-value contract) and W7
       already arrives with `[matlab]` (mat73 depends on it); the separate
       extra exists so that "I want `.nmf`" does not read as "I want MATLAB
       support".
+63. **B4: the generative pipeline** — `gscale_tree`, `clone_tree`,
+    `rpoints_tree`, `in_c`, `dscam_tree`, `spines_tree`,
+    `PP_generator_tree`, in a new `generate.py`. This closes
+    `treestoolbox-master/construct/` apart from the `fix_tree` family,
+    which is a MATLAB GUI.
+    - **`MST_tree` gained the mode the pipeline needed.** MATLAB's
+      `MST_tree ({tree}, X, Y, Z, ...)` continues growing an *existing*
+      morphology; this port only ever grew from point indices, so
+      `clone_tree` had nowhere to attach a region onto the soma. `start=`
+      now accepts a `Tree` or a list of them: the seed's nodes go in front
+      of the cloud in one index space, every one of them is a valid
+      attachment point (not just the root), its metric path lengths carry
+      into the balancing term, and its diameters and regions survive into
+      the result. Nodes the growth adds land in a region called `"new"`,
+      exported as `MST_NEW_REGION`, which is what `clone_tree` renames per
+      region — MATLAB relies on the caller having reserved region 1 for
+      this and on new nodes coming out numbered after old ones.
+    - **`gscale_tree` returns objects, not fifteen parallel cell arrays.**
+      MATLAB's `spanning` struct is `regions`, `xlims`, `ylims`, `zlims`,
+      `xmass`, `ymass`, `zmass`, `iR`, `nBT`, `X`, `Y`, `Z`, `qdiam`,
+      `mxdiff`/`stdxdiff` (x3), `mnBT`/`stdnBT` — each a cell array indexed
+      by region and then by tree, all of which must be kept in step by
+      hand, and one of which (`qdiam`) silently is not. Here it is a list of
+      `RegionSpan` objects looked up by name, `spanning["dendrite"]`, with
+      the three axes as columns of one array rather than as three fields.
+    - Absent regions are `NaN` rows rather than omitted ones, so row `i`
+      always means tree `i`. MATLAB does the same for most fields but not
+      for `qdiam`, which appends only when the region is present and so
+      cannot be indexed by tree at all.
+    - **`rpoints_tree` samples the whole batch at once.** MATLAB loops in
+      MATLAB over the cumulative density, calling `ind2sub` per point, and
+      shows a waitbar every 5000 — which is what makes the waitbar worth
+      having. One `searchsorted` replaces it; `clone_tree` calls this
+      repeatedly, so it was the obvious hot spot.
+    - **`cpoints` and `cplotter` are deliberately not ported.** Both exist
+      only to unpack MATLAB's packed `contourc` matrix, `[level, n; x1 y1;
+      ...]`, into usable pieces. `hull_tree` here returns 2D boundaries as a
+      plain list of polygons (#59), so `cpoints (c)` is `np.vstack(polygons)`
+      and `cplotter (c)` is a loop over `ax.plot`. `in_c` does carry real
+      content past the unpacking — largest ring is the outside, the rest are
+      holes — and is ported as `in_hull`.
+    - **`clone_tree`'s two-stage point count is kept**, because it is not a
+      fudge: `MST_tree` connects some target points as continuation points,
+      so asking for N targets yields fewer than N *topological* points. Both
+      versions grow a throwaway tree with N, count the survivors, and regrow
+      with `N * (N / survivors)` capped at 3.5 N. It roughly doubles the
+      growth cost and is why cloning ten HSN dendrites into two clones takes
+      ~11 s.
+    - **MATLAB's outlier pass is dropped**, and this one is a judgement
+      call rather than a bug fix. It repeatedly bins the pooled cloud,
+      deletes every point sitting alone in a bin, and stops once half the
+      cloud is gone. What counts as an outlier therefore depends on how many
+      cells happen to be in the group, and a sparse group can lose half its
+      points to it. Callers who want it can bin the cloud themselves; the
+      docstring says so.
+    - `clone_tree` dispatches on region **names** — `soma`, `primary`,
+      `spines`, `axon` are all special-cased — which is MATLAB's scheme and
+      is worth knowing about, since a group whose regions are called
+      anything else still clones but without the special handling.
+    - **Verification.** None of B4 can be diffed against MATLAB: every
+      function draws from a random stream that numpy cannot reproduce. So
+      each is pinned to the statistic it promises instead — a clone's branch
+      count and extent land inside the group's measured spread,
+      `rpoints_tree`'s output re-bins to a correlation of >0.95 with the
+      density it sampled and never touches an empty voxel,
+      `PP_generator_tree` hits its target R to within 0.1 *measured with an
+      independent seed and a longer Monte-Carlo run than the search used*,
+      and every spine is perpendicular to its cable to 1e-8.
+    - **Four bugs in `spines_tree` alone**, all fixed and logged: its
+      documented `XYZ` coordinate input cannot be reached (dispatch is on
+      magnitude, so coordinates are read as node indices or crash — this
+      port dispatches on shape); `'-sr'` reads an unassigned `flag`; the
+      documented `indhead`/`indneck` outputs hold only the *last* spine; and
+      a negative neck-length draw — 16% of the time at its own defaults —
+      puts the head on the opposite side of the dendrite from its neck. That
+      last one was caught by a test asserting head and neck are collinear,
+      not by reading the source.
+    - `PP_generator_tree` gains `max_iter`. MATLAB's search loop has no
+      bound in either of its two copies, and many targets are unreachable
+      because R is capped by how tightly the exclusion zone and the fixed
+      200 um box let points pack. Giving up now warns with the R actually
+      reached.
+    - `gdens_tree` and `r_mc_tree` were widened to accept a bare `(n, 3)`
+      point cloud as well as a `Tree` — MATLAB's `gdens_tree` already does,
+      and both are applied to clouds that are not trees here.
+64. **B5 and W5, and the last of rule R1** — `plotsect_tree`,
+    `xplore_tree`, population input, and the two functions still spelling
+    the dimensionality as a string. This closes `REVIEW_PLAN.md`: every
+    work package W1-W7 is now either done or explicitly declined.
+    - **`plotsect_tree` raises where MATLAB draws nothing.** Its docstring
+      requires a path running away from the root; when the start node is not
+      an ancestor, MATLAB's `1 : find (...)` evaluates to an empty range and
+      it plots an empty line, returning normally. A blank line in a figure
+      is a bad way to learn that two nodes are not related.
+    - **`xplore_tree`'s region labels were attached to the wrong regions.**
+      MATLAB writes `rnames {counter}` while drawing region `uR (counter)`
+      -- the loop position, not the region value. They agree only when the
+      regions in use are exactly `1 : n`, which any tree that has had a
+      region deleted is not. In a figure whose whole purpose is to say which
+      region is which, that is worth fixing rather than reproducing.
+    - `xplore_tree`'s arrow overlay is dropped. MATLAB's `'-1'` adds a
+      quiver per segment showing which way is away from the root;
+      matplotlib's 3D quiver draws a cone per arrow and is unusable past a
+      few hundred segments. The node indices the same mode already writes
+      carry the direction, since they increase away from the root.
+    - **`spread_tree` and `spread_trees` are one function** (REVIEW_PLAN
+      P7). They differed only in return type -- offsets versus translated
+      trees -- with one a two-line wrapper around the other. Now
+      `spread_tree` returns a `SpreadResult(trees, offsets)` and
+      `spread_trees` is a deprecated alias for its `.trees`.
+    - **Population input (W5) splits two ways, and the split is the
+      point.** Per-node and per-branch quantities -- `gene_tree`,
+      `dist_tree` -- concatenate cleanly, and get it from one
+      `@accepts_population` decorator. Anything that **bins** cannot:
+      `sholl_tree` and `bin_tree` would give each cell its own radii or
+      edges, and bin 3 would mean a different distance in every cell. Those
+      two compute their bins across the whole group and return one result
+      per tree *on a common axis*.
+    - **`sholl_tree` on a group is deliberately not pooled for you.**
+      Summing profiles, averaging them, and normalising per cell first are
+      three different answers to "the group's Sholl profile", and the choice
+      changes what the number means. Returning aligned per-cell profiles
+      leaves it with the caller, who can `np.array([r.s for r in results])`
+      and reduce as they see fit.
+    - Editing functions are **not** generalised, as the review proposed:
+      `[delete_tree(t, n) for t in trees]` is already clear, and a wrapper
+      would only hide that the operation is per-tree.
+    - An empty list of trees now raises `"empty list of trees"` naming the
+      function, rather than falling through to a per-tree computation and
+      failing somewhere unhelpful. `is_population([])` is therefore `True`
+      -- vacuously a list of trees -- which is what makes that error
+      reachable.
+    - **Rule R1 is finally complete.** `vonMises_tree` and `bf_tree` were
+      the last two functions taking `dim` as `"2d"`/`"3d"`; both now take
+      the integer 2 or 3, with the string spelling warning for one release.
+      A test in `test_api_conventions.py` now walks `pynetrees.__all__` and
+      fails if *any* exported function defaults `dim` to a string, so the
+      rule is guarded rather than one instance of it.
+65. **`stacks/` and the GUI question.** The analysis is `GUI_AND_STACKS.md`;
+    this records what came of it.
+    - **`cgui_tree` is not ported, and the recommendation is not to rebuild
+      it either.** It is one 7,203-line function dispatching **332 string
+      cases** over a single `global cgui` struct, and its own header advises
+      readers to fold the file on its `switch` statements. But the line
+      count is misleading: sorting its twelve panels by *what the user
+      gets*, everything except one capability is already in this port --
+      figures and colours (matplotlib/PyVista, 111 of the 332 cases),
+      statistics (`stats_tree`), positioning (`tran_tree`/`rot_tree`/
+      `spread_tree`), automatic reconstruction (`MST_tree`), and stacks
+      (below). The single gap is **point-and-click editing of a
+      morphology**, and napari ships that as a core layer type. So the
+      honest deliverable is a napari plugin in a **separate distribution**
+      -- Qt is not a dependency `pynetrees` should carry -- and it blocks
+      nothing.
+    - **`stacks/` is ported at about a quarter of MATLAB's line count**,
+      because seven of its eight functions are file loading or generic 3D
+      image processing. `tifffile` replaces three loaders, `imageio` the
+      fourth, matplotlib the viewer.
+    - **The tiled `Stack` container is the part that had to be written.** A
+      stack here is not one volume: two-photon acquisition of a whole
+      neuron gives overlapping fields of view, each with its own origin in
+      microns. Every operation taking a micron coordinate has to find the
+      tile containing it first. `Stack.tile_at` also answers for a point in
+      the *gap* between tiles by nearest centre, since a traced node can
+      land there and refusing to measure it would be worse.
+    - **`skel_stack` is delegated to `skimage`, and the docstring says the
+      result will differ.** MATLAB's is a hand-rolled 3D thinning whose own
+      header says "hopefully correctly interpreted from their papers" of
+      Palagyi and Kuba; `skimage.morphology.skeletonize` implements Lee,
+      Kashyap & Chu (1994). Both are topology-preserving medial-axis
+      thinnings and the voxels they keep are not the same. Reimplementing
+      the toolbox's reading of a paper would have been reimplementing it
+      worse, but this is a reconstruction front-end, so the difference is
+      stated rather than buried.
+    - Its threshold default changes too. MATLAB walks a 100-bin histogram
+      down until it has counted **30000 voxels** -- a fixed number, so the
+      threshold means something different for every stack size. This uses
+      Otsu's, which is documented, reproducible and scale-free; an explicit
+      `thr` still overrides.
+    - **Carrier points come back in microns**, ready for `MST_tree`.
+      Returning voxel indices would silently scale the whole
+      reconstruction by the voxel size, and it is the sort of error that
+      produces a plausible-looking cell.
+    - **`fitD_stack` samples along the segment, which MATLAB's does not.**
+      Its source flags this itself: `% TODO, CRITICAL: RIGHT NOW ONLY THE
+      TERMINAL POINT IS TAKEN`. Three sampling positions are constructed
+      and all three evaluate to the segment's far end. `samples=` exposes
+      the choice and defaults to 5; `samples=1` reproduces MATLAB.
+    - Worth recording because measuring it contradicted the obvious
+      expectation: averaging along a segment is **not** automatically less
+      noisy. Near a branch point the perpendicular profile picks up the
+      *sibling* branch, and on a clean synthetic phantom the single-point
+      measurement came out less variable (1.2 versus 1.8 voxels). The fix
+      is to make the choice available, not to assert MATLAB's number is
+      wrong.
+    - **`fitD_stack` returns microns; MATLAB returns voxels.** Its width is
+      measured in sampling steps along the perpendicular and returned raw,
+      to be assigned to `tree.D` -- microns everywhere else in the toolbox.
+      The two agree only when the in-plane voxel happens to be 1 um. Here
+      the width is scaled by the length of one sampling step in microns,
+      which is exact even for anisotropic voxels.
+    - One MATLAB idiosyncrasy *is* reproduced: its two edge indices are
+      offset by one relative to each other (`+ i_max` against
+      `+ i_max - 1`), from `diff` shortening the array. A sub-voxel
+      systematic offset in an already-approximate measurement; changing it
+      would silently move published numbers.
+    - Tests run against a **synthetic phantom** -- a Y-shaped fluorescent
+      cell of known cable length and Gaussian width -- rather than a real
+      stack. The real question about this module is whether microns and
+      voxels stay straight through four coordinate transforms, and a
+      phantom answers it where real data would only say "plausible". The
+      end-to-end test thresholds, skeletonises, wires with `MST_tree`, and
+      gets the phantom's 76.4 um cable back to within 10%.
+    - New optional dependency: `tifffile` and `imageio` under a `[stacks]`
+      extra (`scikit-image` was already under `[plot]`).
+66. **`pynetrees.blender` — native Blender export, superseding `pov_tree`
+    and `x3d_tree`.** Built on the pip-installed `bpy` module, as chosen.
+    - **The difference from `pov_tree` is what you get back.** MATLAB
+      writes a POV-Ray scene *file*: a text description handed to an
+      external renderer, and the end of the pipeline. This builds **real
+      Blender objects** in a live session, so the `.blend` opens as an
+      editable scene -- relight it, animate it, add a scale bar, re-render
+      at a different angle -- without regenerating anything. Same for
+      `x3d_tree`, whose mesh export is a viewer format with no way back.
+    - **One curve object per region**, so `axon` and `dendrite` are separate
+      entries in the outliner with their own materials and can be hidden or
+      recoloured independently. MATLAB's POV output is one undifferentiated
+      union of cylinders (or a blob) with colour baked per primitive.
+    - **One POLY spline per unbranched section**, from `dissect_tree`. A
+      branch point ends one section and starts its daughters, so the swept
+      tubes meet instead of abutting -- which a per-node cylinder soup does
+      not do, and is visible at every bifurcation.
+    - **Taper is geometry, not shading.** Each control point carries its
+      node's radius and Blender's bevel sweeps a circle scaled by it. The
+      subtlety worth recording: Blender's per-point `radius` is a *fraction*
+      of the curve's `bevel_depth`, so the two have to be normalised against
+      each other or every render is silently mis-scaled. A test asserts the
+      drawn width equals `tree.D` at both extremes.
+    - **Headless rendering with an orthographic camera.** Perspective would
+      make the near half of a cell look thicker than the far half, which is
+      exactly the artefact a morphology figure must not have. Framing had to
+      fold in the aspect ratio: Blender's `ortho_scale` sets the view's
+      *larger* dimension, so a tall cell in a wide frame is cropped
+      otherwise -- which is what the first version did, and what a test now
+      catches by checking no lit pixel touches the border.
+    - The camera's clip range is set explicitly. Blender's default is
+      metre-scale and a cell is hundreds of microns across.
+    - **`bpy` is deliberately not a dependency, and `import pynetrees` never
+      imports this module.** It is a ~300 MB wheel, ships only for the exact
+      Python version it was built against, and **pins `numpy < 2`** --
+      installing it here downgraded numpy from 2.4.6 to 1.26.4. The full
+      suite passes on both (the package declares `numpy>=1.24`), but that is
+      far too much to impose on someone who wants a Sholl profile. It lives
+      under a `[blender]` extra, and `from pynetrees import blender` is the
+      explicit opt-in.
+    - **A `.blend` is a figure, not an archive.** Blender stores coordinates
+      as float32, so a node at 120 um round-trips to within ~1e-5 um.
+      Irrelevant against 0.1 um reconstruction precision, but it is not a
+      lossless container and the docstring says so; `save_tree` is.
+    - Render tests are marked `slow` -- the first render in a process pays
+      ~9 s of shader compilation, later ones about half a second. They check
+      that the pipeline runs end to end and puts a lit cell in frame; a
+      pixel comparison against a reference image would be testing Blender's
+      sampler rather than this module.
+
+### 2026-08-26 — phase-2 review response (see `REVIEW_PLAN_2.md`)
+
+67. **V1: every deprecation shim removed.** The port has no users yet, so
+    a shim is pure cost -- a branch to keep working, test and explain, and
+    one that every function written afterwards would inherit. `_compat.py`
+    went from ~130 lines of warn-and-translate to a 12-line `dim`
+    validator; `bf_tree(params=)`, the `"2d"`/`"3d"` dimension strings,
+    `dim2=` everywhere, `idpar_tree(no_self=)`, `elimt_tree(no_root=)`,
+    `plot_tree_mpl`, `dA_tree_mpl` and `spread_trees` are gone.
+    - **The tests that asserted the shims warn now assert they are gone** --
+      `TypeError: unexpected keyword`, not a silent no-op -- because a
+      caller upgrading needs the failure to be loud. Two sweeps over
+      `pynetrees.__all__` fail if any exported function still takes `dim` as
+      a string or accepts `dim2` at all, so the removal cannot be undone by
+      accident.
+    - **A bulk regex destroyed `idpar_tree`'s body** during this pass,
+      leaving a function that returned `None`; 26 tests failed, all of them
+      *downstream* (`'NoneType' object is not subscriptable`, inside
+      `Pvec_tree`) rather than at the site. The body was restored and
+      `scratchpad/check_bodies.py` -- an AST sweep for any function whose
+      body is nothing but a docstring -- has been run after every bulk edit
+      since. Worth recording as a hazard of the technique, not just a fixed
+      bug.
+    - **The removal left the README and three notebooks broken**, and the
+      suite stayed green throughout, because nothing executes the
+      documentation. The README went on advertising `pt.plot_tree_mpl`;
+      `examples/plot.ipynb` called `spread_trees` three times and passed
+      `dim2=True`; `01_basics` passed `no_self=True`. Every one of them a
+      `TypeError` or `AttributeError` for the first person to copy a
+      snippet. Found during V3, fixed, and now guarded by
+      `tests/test_docs_use_the_real_api.py`, which reads every `pt.<name>`
+      out of the README and the notebooks and fails on any that `pynetrees`
+      does not have. Executing the notebooks in CI would catch more, but it
+      needs PyVista rendering and minutes per run; reading them is cheap and
+      catches the failure mode that actually occurred.
+
+68. **V2: an empty tree is a value you can use, not just one you can
+    create.** `delete_tree` can produce a tree with no nodes and a
+    population is allowed to contain one, so 52 of the exported functions
+    raising on it was a real gap. A survey found them; the count is now
+    zero outside a documented `MAY_RAISE` set. The rule lives in
+    `pynetrees/_empty.py` and is applied with an `@empty_safe(...)` decorator
+    at each definition site, so the behaviour is visible in the source
+    rather than buried in a base class.
+    - **Sums return `0.0`, means and fits return `nan`.** Total length of
+      no cable is zero; averaging nothing is *not* zero. If an empty tree's
+      mean path length came back as 0, a population average containing one
+      cell would be quietly dragged toward zero -- there is a test for
+      exactly that.
+    - **Per-node quantities return an empty array of the right shape**, not
+      a length-1 array of zeros, which would put a phantom node into every
+      downstream sum. `direction_tree` keeps its `(0, 3)`, `gene_tree` its
+      `(0, 2)`, and the electrotonic matrices their `(0, 0)`.
+    - **`convexity_tree` and `r_mc_tree` return `nan`, not 0 or 1.** The
+      fraction of visible pairs among no pairs is undefined, and `R = 1`
+      would assert "indistinguishable from random" about a point set that
+      does not exist. Either number would be a claim.
+    - **`delete_tree` now returns an empty tree rather than raising.** The
+      Round 1 item had been recorded as done but never landed, and without
+      it the whole premise was hollow: you could not *produce* the value
+      the rest of the port had just learned to handle. It also means
+      "filter a population down to the cells matching X" no longer fails on
+      the one cell where nothing matches.
+    - **`plot_tree` returns the plotter untouched**, so one empty cell in a
+      group does not take the whole figure down.
+    - **Genuinely unanswerable questions still raise** -- `tree.root`,
+      `MST_tree` with no points, the generative pipeline. There is no right
+      answer to "where is the root of nothing", and inventing one would
+      hide a bug rather than handle a case.
+
+69. **V3: a list of trees in, a list of results out** -- uniformly, across
+    88 functions, via `@accepts_population` at each definition site.
+    - **This replaces W5's concatenation** (#64). `gene_tree` on a group
+      used to return one stacked array, on the reasoning that pooling is
+      what a population analysis wants. List return is the better rule
+      because it is *reversible*: `np.vstack(results)` recovers the pooled
+      form in one call, while a concatenated array cannot be split again
+      unless the caller separately kept every tree's node count -- and if
+      they kept it, they did the bookkeeping the concatenation was supposed
+      to save them.
+    - **`@accepts_population` goes outside `@empty_safe`.** The other order
+      maps to the *undecorated* function, so an empty tree inside a
+      population would raise -- which is precisely the case #68 exists to
+      support. The two decorators are only correct in one order and the
+      docstring of each says so.
+    - **An empty tree keeps its slot.** The mapping never filters. Dropping
+      it would renumber every cell after it, which is the kind of
+      off-by-a-cell that survives review.
+    - **Per-tree arguments zip; the ambiguous case raises rather than
+      guessing.** A `list` of exactly `len(trees)` *sequences* is one value
+      per tree; a scalar or an `np.ndarray` is one value for all of them.
+      The genuinely ambiguous shape is a flat list whose length happens to
+      equal the number of trees -- `delete_tree(trees, [3, 7])` with two
+      trees could mean either, and guessing wrong deletes the wrong nodes
+      with nothing downstream to notice. It raises and names both ways out.
+    - **Nesting stops at one level.** A list of lists of trees gives a list
+      of lists of results, because `dLPTCs_trees()` returns groups and a
+      `.mtr` can hold a 2-deep cell array. Deeper is not a shape anything
+      in the toolbox produces, and recursing into it would silently accept
+      a mistake.
+    - **`plot_tree` is the deliberate exception**: a group is drawn into
+      *one* plotter, not a list of them. Returning a gallery of separate
+      windows would defeat the reason for handing it a group. Without an
+      explicit colour the cells cycle a ten-colour palette so they can be
+      told apart, and `offset=` accepts an `(n_trees, 3)` array, which makes
+      `plot_tree(s.trees, offset=s.offsets)` the whole spread in one call.
+    - **What is deliberately not mapped**, each for a stated reason:
+      binning (`sholl_tree`, `bin_tree`) computes its bins *across* the
+      group, or bin 3 would mean a different distance in every cell;
+      distribution fits (`vonMises_tree`, `bf_tree`) pool by design, since
+      the fit needs one distribution; two-tree functions (`cat_tree`,
+      `peters_tree`) are ambiguous -- all pairs? zipped? -- so the caller
+      writes the loop they mean; and savers taking a path would write every
+      tree to the same file. A test asserts none of these got decorated by
+      accident.
+    - **The sweep found a pre-existing bug in `insertp_tree`**: with its
+      own default arguments it crashed on any real tree. The defaults
+      subdivide the root path every 10 um, which puts several new nodes in
+      one original segment, and the second insertion's parent is a node
+      that exists only in the growing arrays -- reading it from `tree.X`
+      ran off the end. MATLAB writes into its growing fields and so does
+      this now. A port bug, not a toolbox bug.
+
+70. **V4: the twelve functions added to the MATLAB toolbox on 2026-08-26.**
+    `L_tree`, `BLO_tree`, `barcode_tree`, `persistenceimage_tree`,
+    `realisations_tree`, `span_tree`, `theta_tree`, `theta_mc_tree`,
+    `scaleS_tree`, `scaleV_tree`, `random_tree`, `growth_tree`. The
+    persistence group is the substantial addition: a topological
+    description of a morphology, which nothing in the port previously did.
+    - **Verified against MATLAB where that was possible, and said so where
+      it was not.** `BLO_tree`, `barcode_tree` and `realisations_tree` were
+      diffed against MATLAB's own code under Octave and agree exactly --
+      node for node, tie-breaking included, which matters because the port
+      computes the decomposition a completely different way.
+      `persistenceimage_tree` agrees to 5e-15 once MATLAB's truncated
+      kernel is reproduced. `span_tree` and `theta_tree` agree pixel for
+      pixel. `growth_tree` could not be diffed at all -- its target cloud
+      comes from `boundary()`, which Octave does not implement -- so it is
+      pinned against its defining properties instead.
+    - **`BLO_tree` does not order by length**, despite being called *branch
+      length order* and documenting `V` as "values to be integrated to
+      select longest path". MATLAB counts path nodes with `V > 0` and never
+      sums `V`, so branch 1 is the path with the most nodes -- on `hsn` it
+      ends 319.5 um from the root while the furthest tip is at 648.4 um --
+      and any strictly positive `V` gives an identical ordering. The two
+      rules disagree about where 69-97% of nodes belong. `by="nodes"` is
+      the default so barcodes reproduce; `by="length"` does what the name
+      says. Whether the count rule is *worse* was tested and not
+      established: resampling to 1 um and comparing barcodes, it was if
+      anything the more stable of the two.
+    - **`BLO_tree` loops forever on a repeated point**, verified by running
+      it: a four-node chain plus one node duplicating its parent's
+      coordinates is enough. `barcode_tree`, `persistenceimage_tree` and
+      `realisations_tree` all inherit it. The port is driven by a frontier
+      of unassigned branch heads rather than by rescanning `ipar`, so it
+      terminates by construction.
+    - **`realisations_tree` returns an exact integer.** MATLAB computes the
+      product in double precision; on `hsn` the answer has 271 digits.
+      Python's integers do not overflow, so the value stays usable.
+    - **`theta_tree` returned a bin index where a distance was meant** --
+      `find (...)` over `0 : ceil (max (hB))` is one micron out. Confirmed
+      against MATLAB: it returns 10 where the covering radius is 9 um. The
+      port returns the distance. A fixed 1 um error hurts most where theta
+      is smallest, which is the finely space-filling arbors.
+    - **`persistenceimage_tree` counts coincident bars once** (assignment,
+      not accumulation), dropping a median of 1.5% of bars across the 55
+      dLPTC cells, at worst 4.0%. The port accumulates by default, matching
+      the published method; `accumulate=False` reproduces MATLAB.
+    - **Morphological closing via distance transforms.** `span_tree`'s
+      closing is `O(n^2 r^2)` as a footprint convolution -- 7e10 operations
+      on a 900x900 image with `r = 150` -- and `O(n^2)` as two Euclidean
+      distance transforms. The test checks the two agree against the
+      literal definition. Getting them to agree *exactly* needed the
+      erosion padded with True, which is what `binary_erosion` does by
+      default and what the distance transform does not.
+    - **`theta_mc_tree` inherits a hazard worth naming.** It measures
+      inside the alpha shape, and a fixed `alpha` is not a fixed shape
+      across node densities: resampling `hsn` to 1 um leaves its convex
+      hull unchanged (6.21e6 um^3) while the boundary goes from 30% to 49%
+      of it, and theta with it from 24 um to 48 um. Nothing about the
+      morphology changed. Documented on `theta_mc_tree`, `boundary_tree`
+      and in a test; `r_mc_tree` and `scaleV_tree` inherit it too.
+    - **`growth_tree` tracks its own bookkeeping incrementally.** MATLAB
+      rebuilds the tree and recomputes `len_tree`/`T_tree` every step
+      (O(n^2) over a growth) and recomputes the full `pdist2` between every
+      node and every candidate to get the space-filling term. Both are
+      running quantities over a node set that only grows, so both update in
+      place -- 14 s to 5.8 s on a 500 um growth, with a test comparing the
+      tracked values against recomputing at every single step.
+    - `growth_tree` returns the final tree plus the logs; MATLAB returns a
+      cell array holding the tree after *every* step, which for a long
+      growth is hundreds of copies of a growing morphology. Available as
+      `history=True`.
+    - **The V2 and V3 sweeps paid for themselves here.** `span_tree` and
+      `theta_tree` were written without `@empty_safe`, and the two
+      rule-level sweeps -- "nothing exported may raise on an empty tree"
+      and "every mapped function keeps the shape it was given" -- caught
+      both, two hundred tests after those rules were written. Neither would
+      have been found by a test written alongside the new functions,
+      because the author who forgets the rule also forgets to test it.
+
+
+71. **V5, first half: `load_mtr`'s variable-selection rule.** Two rules were
+    both wrong, in opposite directions. Requiring the workspace variable to
+    be called exactly `tree` rejected any file saved by hand or by T2N,
+    which commonly stores it under a different name or alongside other
+    variables. The fix that replaced it went too far the other way: when
+    several candidates existed, it *preferred* one called `tree`, which
+    would silently load one population out of a file holding two, with
+    nothing to say the rest had been dropped. What a variable is called is
+    not evidence about which one you meant, so the rule now is: a file with
+    exactly one tree-shaped variable loads it, whatever it is called; a
+    file with several refuses and names them, including when one of them
+    happens to be called `tree`. This had no test coverage in either
+    direction before now -- `tests/test_io_formats.py` covers all four
+    cases (unnamed variable, several candidates, `variable=` picking one,
+    no tree data at all).
+    - **V5's other half -- v7.3 (HDF5) writing for `save_tree`/`save_mtr` --
+      is not done.** `save_tree` still writes MATLAB v5 (2 GB/variable
+      ceiling); `NOT_YET_PORTED.md` carries the plan (write directly with
+      `h5py`, falling back to v5 per-file if that proves impractical).
+      Confirmed while scoping it that this Octave installation cannot read
+      MATLAB's own v7.3 output reliably (`load: can't read 'rnames'
+      (unknown datatype)` on a real v7.3 `.mtr`), which rules out
+      differential-testing a writer against Octave the way V4 verified
+      `BLO_tree`; a v7.3 writer will have to be checked by reading its own
+      output back (`mat73`, already a dependency) and by structural
+      inspection instead.
+
+72. **Documentation brought back in line with the package**, prompted by a
+    direct check rather than a scheduled task: `docs/api-overview.md` was
+    missing **63 of 173 public names** -- more than a third of the API,
+    everything added since B1/B4 -- and README's "Not ported" list and
+    `docs/matlab-migration.md`'s both still named `clone_tree`/`gscale_tree`,
+    the whole density/hull family and `convexity_tree`/`boundary_tree`/
+    `dissectSholl_tree`/`r_mc_tree`/`M_atten_tree` as unported, all of which
+    had been done for phases. A stale "not ported" list is worse than an
+    incomplete one: it tells a reader a capability doesn't exist when it
+    does.
+    - **`docs/FUNCTION_REFERENCE.md`, new.** Every public name's full
+      signature and complete docstring, generated by
+      `scripts/gen_function_reference.py` via `inspect` rather than
+      transcribed by hand -- so it cannot describe a signature that doesn't
+      exist. It can still fall behind if the generator isn't re-run after a
+      docstring changes, which is why `tests/test_docs_use_the_real_api.py`
+      now checks the *generated file* against `pynetrees.__all__` (and
+      `pynetrees.blender.__all__`, generated into its own section since that
+      module is deliberately not auto-imported) in both directions: every
+      public name must have an entry, and no entry may name something that
+      no longer exists.
+    - **`docs/api-overview.md` rewritten to cover the missing third**,
+      adding four sections that didn't exist (generative pipeline, density/
+      hulls/space-filling, topological description, image stacks) and
+      fixing entries that had gone actively wrong rather than just missing
+      -- `spread_trees` (deleted in V1, #67), `load_tree`/`save_tree`
+      described as `.npz`-only when both are format dispatchers over seven
+      formats. Guarded the same way: a test asserts every public name is
+      mentioned somewhere in the file.
+    - **`examples/06_topology_and_growth.ipynb`, new** -- the phase-2
+      additions had no tutorial coverage at all. Covers `BLO_tree`/
+      `barcode_tree`/`persistenceimage_tree`/`realisations_tree` and
+      `growth_tree`/`random_tree`/`span_tree`/`theta_tree`, executed
+      end-to-end like 01-05 so its outputs are real.
+      - **First draft of the growth demo was a bad example, caught by
+        looking at the picture rather than trusting the numbers.**
+        `growth_tree(tree, thr=1200.0, stop="length", sp=0.6)` "succeeded"
+        in 4 steps and produced 4 straight spokes from the root, because
+        `stop="length"` with a large budget lets the first few
+        space-filling-biased picks (each a single straight segment) consume
+        nearly the whole budget before any branching structure can form.
+        Switched to `stop="steps"` (the default), which produces a
+        genuinely branching synthetic arbor.
+      - **A comparison plot of `sp`'s effect was initially unreadable for
+        the same reason**: `sp=1` reaches for the single most distant
+        target on step one, which on a cable-length x-axis squashed the
+        `sp=0`/`sp=0.5` curves to a sliver at the origin. Replotted against
+        step number, and the `sp=1` discontinuity kept and explained in
+        prose (a real, slightly surprising property of the algorithm) rather
+        than hidden by re-parameterising until the plot looked nicer.

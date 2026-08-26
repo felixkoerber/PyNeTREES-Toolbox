@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def test_overlap_correction_is_a_no_op_without_enclosed_branch_points():
 
 
 def test_overlap_factor_grows_by_sqrt2_per_branch_passed():
-    from pytrees.construct import _overlap_factor
+    from pynetrees.construct import _overlap_factor
 
     tree = pt.sample_tree()
     factor = _overlap_factor(tree)

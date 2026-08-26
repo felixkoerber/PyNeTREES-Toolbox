@@ -8,6 +8,7 @@ Task-oriented walkthrough. Assumes you've skimmed [concepts.md](concepts.md).
 - [Selecting parts of a tree](#selecting-parts-of-a-tree)
 - [Editing](#editing)
 - [Generating synthetic trees](#generating-synthetic-trees)
+- [Synthesising trees from group statistics](#synthesising-trees-from-group-statistics)
 - [Plotting](#plotting)
 - [Passive cable analysis](#passive-cable-analysis)
 - [Simulating with NEURON](#simulating-with-neuron)
@@ -17,7 +18,7 @@ Task-oriented walkthrough. Assumes you've skimmed [concepts.md](concepts.md).
 ## Loading and saving
 
 ```python
-from pytrees import (load_swc, save_swc, load_mtr, load_neurolucida,
+from pynetrees import (load_swc, save_swc, load_mtr, load_neurolucida,
                      sample_tree, hss_tree)
 
 tree  = sample_tree()                    # MATLAB's 197-node sample
@@ -40,7 +41,7 @@ For round-tripping trees *within* Python, `save_tree`/`load_tree` use a native
 unlike SWC which is lossy:
 
 ```python
-from pytrees import save_tree, load_tree
+from pynetrees import save_tree, load_tree
 save_tree(tree, "cell.npz")
 tree = load_tree("cell.npz")
 ```
@@ -65,7 +66,7 @@ Fix them with `repair_tree`.
 All of these return one value per node, aligned with `tree.X` etc.
 
 ```python
-from pytrees import (
+from pynetrees import (
     len_tree, surf_tree, vol_tree, eucl_tree, PL_tree, Pvec_tree,
     BO_tree, strahler_tree, angleB_tree, T_tree, B_tree, C_tree,
 )
@@ -109,7 +110,7 @@ dend = tree.region_nodes("adendIML", "adendMML", "adendOML")
 By subtree — everything downstream of a node:
 
 ```python
-from pytrees import sub_tree
+from pynetrees import sub_tree
 mask, subtree = sub_tree(tree, node)   # mask incl. the node, plus the
                                        # subtree cut out as a real Tree
 mask = sub_tree(tree, node, with_tree=False).mask   # in a hot loop
@@ -118,7 +119,7 @@ mask = sub_tree(tree, node, with_tree=False).mask   # in a hot loop
 By section — the stretches between branch/termination points:
 
 ```python
-from pytrees import dissect_tree
+from pynetrees import dissect_tree
 sections = dissect_tree(tree)      # (n_sections, 2) array of (start, end) nodes
 ```
 
@@ -130,7 +131,7 @@ becomes a NEURON `Section`.
 Every editing function returns a **new** tree.
 
 ```python
-from pytrees import repair_tree, resample_tree, delete_tree, cat_tree
+from pynetrees import repair_tree, resample_tree, delete_tree, cat_tree
 
 clean     = repair_tree(tree)              # enforce BCT conformity
 resampled = resample_tree(tree, 5.0)       # ~5 um internode spacing
@@ -149,7 +150,7 @@ otherwise a single `Tree`.
 Geometric transforms:
 
 ```python
-from pytrees import tran_tree, rot_tree, scale_tree, flip_tree, flatten_tree
+from pynetrees import tran_tree, rot_tree, scale_tree, flip_tree, flatten_tree
 
 tran_tree(tree, [100, 0, 0])    # translate; or pass a node index to centre on it
 rot_tree(tree, (0, 0, 90))      # rotate by degrees about x, y, z
@@ -161,7 +162,7 @@ flatten_tree(tree)              # project to XY, conserving segment lengths
 ## Generating synthetic trees
 
 ```python
-from pytrees import MST_tree, BCT_tree, soma_tree, quaddiameter_tree, jitter_tree
+from pynetrees import MST_tree, BCT_tree, soma_tree, quaddiameter_tree, jitter_tree
 import numpy as np
 
 pts = np.random.rand(300, 3) * 100
@@ -184,12 +185,39 @@ tree = soma_tree(tree, 30.0)     # add a soma
 tree = jitter_tree(tree, 1.0)    # add correlated positional noise
 ```
 
+## Synthesising trees from group statistics
+
+A different kind of synthesis: instead of a fixed point cloud, `clone_tree`
+learns the region-by-region size, shape and branching statistics of a
+**group** of measured cells (via `gscale_tree`) and grows fresh trees that
+share them.
+
+```python
+from pynetrees import clone_tree, dscam_tree, spines_tree, dLPTCs_trees
+
+group = dLPTCs_trees()["dhsn"]          # ten real HSN dendrites
+clones = clone_tree(group, n=5, bf=0.4, rng=0)
+```
+
+`dscam_tree` and `spines_tree` instead modify one existing tree to model
+specific biology: `dscam_tree` pulls sibling branches together (as a DSCAM
+knockout does), `spines_tree` attaches dendritic spines as neck+head node
+pairs.
+
+```python
+knocked_out = dscam_tree(tree, rng=0)             # branches clump together
+spined = spines_tree(tree, spines=100, rng=0)      # + 100 spines
+```
+
+See [`examples/07_generative_pipeline.ipynb`](../examples/07_generative_pipeline.ipynb)
+for a full walkthrough with visualisations.
+
 ## Plotting
 
 3D, via PyVista (the recommended path):
 
 ```python
-from pytrees import plot_tree, BO_tree
+from pynetrees import plot_tree, BO_tree
 
 pl = plot_tree(tree, BO_tree(tree), cmap="viridis", mode="tube")
 pl.show()
@@ -215,19 +243,22 @@ plot_tree(tree, tree.R.astype(float), cmap="tab10", categories=True)
 2D and diagrams, via matplotlib:
 
 ```python
-from pytrees import plot_mpl_tree, dendrogram_tree, dA_tree
+from pynetrees import plot_mpl_tree, dendrogram_tree, dA_tree
 
 plot_mpl_tree(tree)        # lighter 2D/3D line plot
 dendrogram_tree(tree)      # abstract topology diagram
 dA_tree(tree)          # sparsity pattern of the adjacency matrix
 ```
 
-Laying out several cells side by side:
+Laying out several cells side by side: `spread_tree` translates each one onto
+a non-overlapping grid, and `plot_tree` takes a **list of trees** directly,
+drawing them into one scene (cycling a colour per cell if you don't give one):
 
 ```python
-from pytrees import spread_trees
-for cell in spread_trees(cells, dx=100, dy=100):
-    pl = plot_tree(cell, mode="line", plotter=pl)
+from pynetrees import plot_tree, spread_tree
+
+laid_out = spread_tree(cells, dx=100, dy=100)
+pl = plot_tree(laid_out.trees, mode="line")
 ```
 
 ## Passive cable analysis
@@ -240,7 +271,7 @@ tree.Ri, tree.Gm, tree.Cm = 100.0, 1/2500, 1.0
 ```
 
 ```python
-from pytrees import M_tree, sse_tree, syn_tree, lambda_tree, elen_tree, cgin_tree
+from pynetrees import M_tree, sse_tree, syn_tree, lambda_tree, elen_tree, cgin_tree
 
 M   = M_tree(tree)          # sparse conductance matrix of the equivalent circuit
 sse = sse_tree(tree)        # full steady-state matrix (exact, by inversion)
@@ -269,7 +300,7 @@ v = syn_tree(tree, ge=synapse_node, Ee=0.0)
 Time-stepping (integrate-and-fire over the full morphology):
 
 ```python
-from pytrees import LIF_tree
+from pynetrees import LIF_tree
 import numpy as np
 
 t = np.linspace(0, 200, 2001)
@@ -289,7 +320,7 @@ wheel** — install the official binary from
 and make sure it's linked against the same Python.
 
 ```python
-from pytrees import build_neuron_model, insert_mechanism, run_current_clamp
+from pynetrees import build_neuron_model, insert_mechanism, run_current_clamp
 
 tree.Ri, tree.Gm, tree.Cm = 100.0, 1/2500, 1.0
 
@@ -321,7 +352,7 @@ syn = h.Exp2Syn(model.loc(dend_node))
 returns tidy pandas DataFrames:
 
 ```python
-from pytrees import stats_tree
+from pynetrees import stats_tree
 
 res = stats_tree([control_cells, treated_cells], group_names=["control", "treated"])
 res["summary"]     # one row per tree: total length, branch points, ...
@@ -342,7 +373,7 @@ with intersection counts on a common radius grid across all cells.
 Other population-level tools:
 
 ```python
-from pytrees import sholl_tree, bf_tree, peters_tree
+from pynetrees import sholl_tree, bf_tree, peters_tree
 
 sholl_tree(tree, 25.0).s     # Sholl intersection counts
 bf_tree(tree)                # (balancing factor, centripetal bias) estimates

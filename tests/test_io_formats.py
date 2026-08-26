@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 REPO_ROOT = Path(__file__).parents[2]
 NEU_DIR = REPO_ROOT / "treestoolbox-master" / "tests" / "IO" / "test_neu_tree"
@@ -138,7 +138,7 @@ def test_neu_parent_end_zero_branches_from_the_parents_start(tmp_path):
     header = "# section lines: 2\na[0] 0 -1 0 3\nb[0] 0 a[0] {end} 2\n"
     points = "# 3d points: 5\n0 0 0 1\n1 0 0 1\n2 0 0 1\n9 9 0 1\n9 8 0 1\n"
 
-    from pytrees.graphtheory import idpar_tree
+    from pynetrees.graphtheory import idpar_tree
 
     at_end = tmp_path / "end1.neu"
     at_end.write_text(header.format(end=1) + points)
@@ -228,6 +228,59 @@ def test_mtr_uses_matlabs_one_based_region_indices(tree, tmp_path):
     path = pt.save_mtr(tree, tmp_path / "cell.mtr")
     raw = loadmat(str(path), struct_as_record=False, squeeze_me=True)["tree"]
     np.testing.assert_array_equal(np.ravel(raw.R), tree.R + 1)
+
+
+# ---------------------------------------------------------------------------
+# load_mtr's variable-selection rule (V5) -- the name of the variable
+# carries no weight, neither to require it nor to prefer it
+# ---------------------------------------------------------------------------
+
+
+def _mat_with(tmp_path, name, **variables):
+    """A .mat file holding exactly the given workspace variables."""
+    from scipy.io import savemat
+
+    path = tmp_path / name
+    savemat(str(path), variables, do_compression=True)
+    return path
+
+
+def test_a_variable_not_called_tree_still_loads(tree, tmp_path):
+    """The old rule required the variable to be called exactly `tree`,
+    which rejected any workspace saved by hand or by T2N."""
+    from pynetrees.io.mtr import _tree_to_struct
+
+    path = _mat_with(tmp_path, "workspace.mat", my_cell=_tree_to_struct(tree))
+    back = pt.load_mtr(path)
+    np.testing.assert_allclose(back.X, tree.X)
+
+
+def test_several_candidates_refuses_rather_than_preferring_tree(tree, tmp_path):
+    """The old rule *preferred* a variable literally called `tree` when
+    several existed, which would silently load one population out of a
+    file holding two. Now it refuses and names both, whatever they are
+    called -- including when one of them actually is called `tree`."""
+    from pynetrees.io.mtr import _tree_to_struct
+
+    path = _mat_with(tmp_path, "two.mat", tree=_tree_to_struct(tree),
+                     other=_tree_to_struct(pt.sample2_tree()))
+    with pytest.raises(ValueError, match="tree.*other|other.*tree"):
+        pt.load_mtr(path)
+
+
+def test_variable_kwarg_picks_one_of_several(tree, tmp_path):
+    from pynetrees.io.mtr import _tree_to_struct
+
+    path = _mat_with(tmp_path, "two.mat", a=_tree_to_struct(tree),
+                     b=_tree_to_struct(pt.sample2_tree()))
+    assert pt.load_mtr(path, variable="a").n_nodes == tree.n_nodes
+    assert pt.load_mtr(path, variable="b").n_nodes == 15
+
+
+def test_a_file_with_no_tree_data_says_so(tmp_path):
+    path = _mat_with(tmp_path, "empty.mat", x=np.arange(5))
+    with pytest.raises(ValueError, match="no tree data found"):
+        pt.load_mtr(path)
 
 
 # ---------------------------------------------------------------------------

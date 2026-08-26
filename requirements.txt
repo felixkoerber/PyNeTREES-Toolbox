@@ -1,19 +1,29 @@
-# Reproduces the environment this project was developed and tested against
-# (Python 3.13, Windows). Installs everything: core + plotting (pyvista,
-# matplotlib) + dev/test tooling (pytest).
+# Reproduces the environment the test suite is run against
+# (Python 3.11, Windows). Installs core + plotting + I/O + stacks + Blender
+# + dev tooling -- i.e. everything the suite exercises.
 #
 #   pip install -r requirements.txt
-#   pip install -e .          # install pytrees itself in editable mode
+#   pip install -e . --no-deps      # install pynetrees itself in editable mode
 #
 # pyproject.toml defines the same dependencies as proper extras, if you'd
 # rather install a subset:
-#   pip install -e .                # core only (numpy, scipy)
-#   pip install -e ".[plot]"        # + pyvista, matplotlib
+#   pip install -e .                # core only (numpy, scipy, pandas)
+#   pip install -e ".[plot]"        # + pyvista, matplotlib, scikit-image
+#   pip install -e ".[matlab]"      # + mat73, for v7.3 .mtr/.mat
+#   pip install -e ".[nmf]"         # + h5py, for .nmf
+#   pip install -e ".[stacks]"      # + tifffile, imageio, scikit-image
+#   pip install -e ".[blender]"     # + bpy
 #   pip install -e ".[dev]"         # + pytest
-#   pip install -e ".[plot,dev]"    # everything (equivalent to this file)
+#   pip install -e ".[plot,dev]"    # the usual working set
+#
+# NEURON is deliberately absent: there is no Windows pip wheel, so it is
+# installed separately (see the README). The NEURON tests skip without it.
 
 # --- core ---
-numpy==2.4.6
+# numpy is held at 1.26 by bpy, which pins numpy < 2. The package itself
+# only requires numpy>=1.24 and the suite passes on 2.x as well; drop the
+# bpy line below if you want numpy 2 and do not need Blender export.
+numpy==1.26.4
 scipy==1.17.1
 pandas==3.0.5
 
@@ -21,8 +31,24 @@ pandas==3.0.5
 pyvista==0.48.4
 vtk==9.6.2          # pulled in by pyvista; pinned here since it's the heavy one
 matplotlib==3.10.7
+scikit-image==0.26.0  # marching cubes for hull_tree's 3D isosurface
 
-# --- interactive Jupyter widgets (examples/plot.ipynb only, not needed for plotting.py itself) ---
+# --- MATLAB and HDF5 I/O (optional 'matlab' / 'nmf' extras) ---
+mat73==0.65         # v7.3 .mtr/.mat, which is what current MATLAB writes
+h5py==3.16.0        # .nmf; also a mat73 dependency
+
+# --- image stacks (optional 'stacks' extra) ---
+tifffile==2026.3.3
+imageio==2.37.4
+
+# --- Blender export and headless rendering (optional 'blender' extra) ---
+# ~300 MB, built for one exact Python version, and pins numpy < 2.
+bpy==5.0.1
+
+# --- running the example notebooks (not needed for the package itself) ---
+# ipykernel is needed to execute any notebook in examples/ at all; the
+# trame stack below is only for examples/plot.ipynb's live 3D widgets.
+ipykernel==7.1.0
 trame==3.13.2
 trame-vtk==2.11.15
 trame-vuetify==3.2.5

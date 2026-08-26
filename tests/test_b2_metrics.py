@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 
 @pytest.fixture(scope="module")
@@ -215,7 +215,7 @@ def test_three_dimensional_boundary_has_no_polygon(tree):
 def test_simplex_fill_measures_the_enclosed_volume(tree):
     """`volume` sums the filled simplices rather than measuring the outer
     envelope, so a lobed or perforated shape is not over-counted."""
-    from pytrees.density import _simplex_volumes
+    from pynetrees.density import _simplex_volumes
 
     bound = pt.boundary_tree(tree, shrink=0.7)
     assert bound.volume == pytest.approx(

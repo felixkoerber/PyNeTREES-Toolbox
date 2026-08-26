@@ -1,6 +1,6 @@
 # Core concepts
 
-Everything in `pytrees` is built on one data structure and a handful of
+Everything in `pynetrees` is built on one data structure and a handful of
 conventions. Learn these and the ~90 functions in the toolbox become mostly
 self-explanatory.
 
@@ -11,7 +11,7 @@ A neuron morphology is stored as a `Tree`: a flat list of **nodes** (points in
 parent.
 
 ```python
-from pytrees import sample_tree
+from pynetrees import sample_tree
 
 tree = sample_tree()
 tree                      # Tree(name='25HSS', n_nodes=2252, regions=[dend])
@@ -31,7 +31,7 @@ results with ordinary NumPy operations.
 
 ```python
 import numpy as np
-from pytrees import BO_tree, len_tree
+from pynetrees import BO_tree, len_tree
 
 length = len_tree(tree)          # length of each node's segment
 order  = BO_tree(tree)           # branch order of each node
@@ -48,7 +48,7 @@ You rarely touch `dA` directly — `idpar_tree(tree)` gives you the parent index
 of every node as a plain array, which is what you actually want:
 
 ```python
-from pytrees import idpar_tree
+from pynetrees import idpar_tree
 
 parent = idpar_tree(tree)   # parent[i] is node i's parent index
 parent[0]                   # 0 -- the root is its own parent by default
@@ -65,7 +65,7 @@ MATLAB is 1-based and overloads `0` to mean "no parent". Python is 0-based, so
   it uses `-1`, never `0`.
 
 ```python
-from pytrees import NO_PARENT   # == -1
+from pynetrees import NO_PARENT   # == -1
 ```
 
 If you're translating MATLAB code, this is the single most common source of
@@ -115,7 +115,7 @@ Three rules hold almost everywhere:
    a plotting function instead — which is more flexible anyway:
 
 ```python
-from pytrees import plot_tree, BO_tree
+from pynetrees import plot_tree, BO_tree
 plot_tree(tree, BO_tree(tree), cmap="viridis")   # color = per-node values
 ```
 
@@ -124,7 +124,7 @@ plot_tree(tree, BO_tree(tree), cmap="viridis")   # color = per-node values
 Editing functions return a **new** tree rather than modifying in place:
 
 ```python
-from pytrees import resample_tree, tran_tree
+from pynetrees import resample_tree, tran_tree
 
 resampled = resample_tree(tree, 5.0)   # tree is unchanged
 moved     = tran_tree(tree, [100, 0, 0])
@@ -141,7 +141,7 @@ branching, no zero-length segments, and nodes ordered so a parent always
 precedes its children. Real reconstructions often aren't.
 
 ```python
-from pytrees import ver_tree, repair_tree
+from pynetrees import ver_tree, repair_tree
 
 ver_tree(tree)          # returns a list of problems; never raises
 clean = repair_tree(tree)   # fix them
@@ -172,7 +172,7 @@ and quietly picking one would produce plausible-looking but meaningless numbers.
 
 ## 8. Optional dependencies
 
-`import pytrees` only needs NumPy, SciPy and pandas. Heavier things are
+`import pynetrees` only needs NumPy, SciPy and pandas. Heavier things are
 optional and imported lazily, so they only fail if you actually call into them:
 
 | Feature | Needs | Install |

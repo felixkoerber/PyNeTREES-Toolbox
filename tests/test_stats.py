@@ -1,4 +1,4 @@
-"""Tests for pytrees.stats: sholl_tree, vonMises_tree/bf_tree, peters_tree,
+"""Tests for pynetrees.stats: sholl_tree, vonMises_tree/bf_tree, peters_tree,
 stats_tree.
 
 `_geom_tree()` reuses the exact fixture from test_metrics.py (same
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import (
+from pynetrees import (
     Tree,
     bf_tree,
     peters_tree,
@@ -89,15 +89,15 @@ def test_sholl_tree_single_only_subtracts_doubles():
 
 def test_vonMises_tree_accepts_tree_list_and_array_equivalently():
     tree = sample_tree()
-    k_tree, _ = vonMises_tree(tree, dim="3d")
-    k_array, _ = vonMises_tree(rootangle_tree(tree), dim="3d")
+    k_tree, _ = vonMises_tree(tree, dim=3)
+    k_array, _ = vonMises_tree(rootangle_tree(tree), dim=3)
     assert k_tree == pytest.approx(k_array, rel=1e-9)
 
 
 def test_vonMises_tree_pooling_same_tree_twice_matches_single():
     tree = sample_tree()
-    k_single, _ = vonMises_tree(tree, dim="3d")
-    k_pooled, _ = vonMises_tree([tree, tree], dim="3d")
+    k_single, _ = vonMises_tree(tree, dim=3)
+    k_pooled, _ = vonMises_tree([tree, tree], dim=3)
     # pooling two copies of the identical distribution shouldn't change the fit
     assert k_pooled == pytest.approx(k_single, rel=1e-6)
 
@@ -109,7 +109,7 @@ def test_vonMises_tree_rejects_out_of_range_angles():
 
 def test_bf_tree_stays_in_unit_range_on_real_data():
     tree = sample_tree()
-    bf, k = bf_tree(tree, dim="3d")
+    bf, k = bf_tree(tree, dim=3)
     assert 0.0 <= bf <= 1.0
     assert np.isfinite(k)
 
@@ -120,7 +120,7 @@ def test_bf_tree_clips_and_warns_when_out_of_range():
     # 1 -- deterministically forces the out-of-range clip-and-warn branch
     angles = np.linspace(0.1, 3.0, 20)
     with pytest.warns(UserWarning, match="out of usual range"):
-        bf, k = bf_tree(angles, dim="3d", fit_constants=(1e-6, 1.0, 1.0))
+        bf, k = bf_tree(angles, dim=3, fit_constants=(1e-6, 1.0, 1.0))
     assert bf == 1.0
 
 
@@ -229,6 +229,7 @@ def test_stats_tree_group_names_length_mismatch_raises():
 
 
 def test_stats_tree_extras_adds_hull_and_sholl():
+    pytest.importorskip("skimage")
     tree = sample_tree()
     result = stats_tree(tree, extras=True)
     assert "hull_volume" in result["summary"].columns

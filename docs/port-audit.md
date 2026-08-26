@@ -1,6 +1,6 @@
 # Port audit — faithfulness, performance, bugs
 
-A systematic review of the `pytrees` port against the MATLAB TREES toolbox:
+A systematic review of the `pynetrees` port against the MATLAB TREES toolbox:
 does it behave the same, is it idiomatic, where is MATLAB faster, and what's
 broken. Everything below was measured or reproduced, not inferred.
 
@@ -8,6 +8,15 @@ Method: (1) static scan of all 118 public functions for docstring quality and
 loop nesting; (2) an edge-case sweep running 52 functions against 6 degenerate
 trees; (3) scaling profile at two tree sizes to separate algorithmic problems
 from constant factors; (4) targeted differential checks against MATLAB source.
+
+**This audit reflects the package at the time it was run** — 118 of what are
+now 173 public names. The edge-case sweep in particular has since been
+superseded by a broader, permanent one: `tests/test_empty_trees.py` runs
+every eligible exported function (not a sample of 52) against an empty tree
+as a standing test, and `tests/test_population.py` does the same for the
+list-in/list-out population rule (Design Decisions #68–#69). Re-running this
+audit's methodology against the current package, rather than only extending
+its numbers, is tracked as future work.
 
 ---
 

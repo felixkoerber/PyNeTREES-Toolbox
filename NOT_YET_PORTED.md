@@ -1,20 +1,42 @@
 # What is not yet ported
 
 A complete inventory across the three MATLAB codebases in this repo, gathered
-by enumerating every `.m` file and checking it against `pytrees.__all__` and
+by enumerating every `.m` file and checking it against `pynetrees.__all__` and
 `gc_model`. Counts are measured, not estimated.
 
 | Codebase | Functions | Ported | Not ported |
 |---|---|---|---|
-| `treestoolbox-master` | 160 | **103 (64%)** | 57 (~23,600 LoC) |
+| `treestoolbox-master` | 160 | **153 (96%)** | 7 (~6,800 LoC) |
 | `Active GC Model` | 184 `.m` + 9 `.mlx` | ~4 | ~180 |
 | `Pattern_separation_toolbox-main` | 32 | 22 | 10 |
 | `T2N-master` | 52 | 0 (superseded) | — |
 
-The headline number understates the state of the toolbox: **every function in
-`edit`, `electrotonics` and `graphtheory` is ported (48/48)**, and what
-remains is concentrated in rendering, image stacks, the GUI, and a
-generative-modelling pipeline.
+**Work packages A, B1-B5 are all closed.** `edit/` (13), `electrotonics/`
+(14), `graphtheory/` (24), `metrics/` (29), `graphical/` (15) and `IO/`
+(10 of 12) are complete, verified by enumerating the `.m` files and matching
+them against the port's defined names rather than by eye.
+
+What remains, none of it analysis:
+
+| Group | LoC | Status |
+|---|---|---|
+| `stacks/` — 8 functions | 1,005 | **CLOSED** (#65) — `pynetrees/stacks.py`; seven of eight delegated to `tifffile`/`imageio`/`scikit-image`, see [GUI_AND_STACKS.md](GUI_AND_STACKS.md) |
+| `pov_tree`, `x3d_tree` | 1,341 | **PLANNED** (V6) — `pynetrees/blender.py` (#66) covers the same need without an external ray-tracer, but a `.pov`/`.x3d` file is a portable artefact needing no 300 MB dependency, and both were asked for in full |
+| `fix_tree` / `fix_tree_UI` / `finetune_fix_tree` | 5,047 | a MATLAB figure-callback GUI plus a headless core |
+| `classes/+trees/Tree.m`, `Trees.m` | 1,700 | MATLAB OOP shims giving method syntax over the same functions — `pynetrees.Tree` **is** this, natively |
+| `colorme` | 33 | a colour-cycle helper |
+
+**`cgui_tree` (9,022 lines) is not going to be ported**, and
+[GUI_AND_STACKS.md](GUI_AND_STACKS.md) works through why: sorting its twelve
+panels by what the user actually gets, every capability except
+point-and-click morphology editing is already in this port, and napari ships
+that as a core layer type. The deliverable there is a napari plugin in a
+separate distribution, not a work package here.
+
+Deliberately skipped with the reasoning recorded: `cpoints`/`cplotter`
+(unpack MATLAB's packed `contourc` format, which this port never produces),
+`dstats_tree` (a figure, not an analysis), `tlen_tree` (`Tree.total_length`),
+`start_trees` (MATLAB path setup), plus `utilities/` and `gui/` in full.
 
 Three categories below, and they matter in different ways:
 
@@ -54,7 +76,6 @@ reference could be obtained.
 | `load_neurolucida` | Soma-contour cylinder fitting, markers, concatenation to nearest soma | A multi-block `.asc` loads as **several disconnected fragments** rather than one cell |
 | `asym_tree` | `'-m'` movie | MATLAB's was buggy per its own todo list |
 | `insertp_tree` | `'-p'`/`'-pr'` | Don't exist in MATLAB either |
-| `vonMises_tree`, `bf_tree`, `gene_tree`, `dist_tree`, `bin_tree` | `list[Tree]` population input | Only `vonMises_tree`/`bf_tree`/`stats_tree` accept groups today (W5) |
 
 **Also missing: one `load_tree` front door.** `load_mtr`, `load_swc`,
 `load_neurolucida` and `load_tree` are separate entry points; MATLAB
@@ -128,25 +149,36 @@ three shipped fixtures; MATLAB's version crashes on one of them.
 `.mtr`, `.swc`, `.nmf`, `.hoc`, `.nrn`, `.xml` for writing. A `.mtr`
 written here loads through MATLAB's own `load_tree`, verified under Octave.
 
-Not ported from `IO/`: `pov_tree` (POV-Ray) and `x3d_tree` (X3D), both
-superseded by the planned native Blender support; `start_trees.m`, which is
-MATLAB path setup; and the GUI file dialogs, see #62.
+Not ported from `IO/` **yet**: `pov_tree` (POV-Ray) and `x3d_tree` (X3D),
+both scheduled as V6 -- native Blender support (#66) covers the same
+need, but does not replace a portable scene file. Not ported at all:
+`start_trees.m`, which is MATLAB path setup, and the GUI file dialogs,
+see #62.
 
-### B4. Generative pipeline — 8 functions, tightly coupled
+### B4. Generative pipeline — **CLOSED**
 
-`clone_tree` (454) and `gscale_tree` (417) are the headline: clone a tree
-type from population statistics. They depend on `rpoints_tree` (226),
-`PP_generator_tree` (385), `cpoints`/`cplotter`/`in_c` (185 combined), and on
-B1's density machinery. `dscam_tree` (115) and `spines_tree` (186) are
-standalone add-ons.
+| Function | LoC | Notes |
+|---|---|---|
+| `gscale_tree` | 417 | **DONE** (#63) — returns `RegionSpan` objects by name, not 15 parallel cell arrays |
+| `clone_tree` | 454 | **DONE** (#63) — needed a new `MST_tree` mode: grow onto an existing tree |
+| `rpoints_tree` | 226 | **DONE** (#63) — whole batch in one `searchsorted` instead of a per-point loop |
+| `PP_generator_tree` | 385 | **DONE** (#63) — plus `max_iter`; MATLAB's search loop is unbounded |
+| `in_c` | 76 | **DONE** (#63) — as `in_hull`, on polygon lists rather than packed contour matrices |
+| `cpoints`, `cplotter` | 109 | **Skipped deliberately** — pure unpacking of MATLAB's `contourc` format, which this port never produces |
+| `dscam_tree` | 115 | **DONE** (#63) |
+| `spines_tree` | 186 | **DONE** (#63) — four MATLAB bugs fixed, see MATLAB_TOOLBOX_BUGS.md |
 
-This is the largest coherent block still missing and is what "generate a
-synthetic population" needs.
+Still open from `construct/`: `fix_tree` (1000), `fix_tree_UI` (3672) and
+`finetune_fix_tree` (375) — interactive reconstruction repair. `fix_tree_UI`
+is a MATLAB figure-callback GUI and does not port; `fix_tree` has a headless
+core worth extracting, and is grouped with the GUI question below.
 
-### B5. Small graphical
+### B5. Small graphical — **CLOSED**
 
-`plotsect_tree` (72, plot a path along a tree) and `xplore_tree` (123,
-exploration plots). Low effort, low urgency.
+| Function | LoC | Notes |
+|---|---|---|
+| `plotsect_tree` | 72 | **DONE** (#64) — raises where MATLAB silently draws an empty line |
+| `xplore_tree` | 123 | **DONE** (#64) — region labels fixed; arrow overlay dropped, see #64 |
 
 ---
 
@@ -159,10 +191,10 @@ Recorded so the reasoning survives, not to close the question.
 | **`gui/` — `cgui_tree` et al.** | 9,009 | A full MATLAB GUI application. A Python equivalent would be a rewrite against a different toolkit, not a port, and none of the analysis depends on it |
 | **`stacks/` — 8 functions** | 1,005 | Image-stack loading, skeletonisation, diameter fitting. This is image processing, well covered by `scikit-image`/`tifffile`; porting MATLAB's versions adds little |
 | **`utilities/` — 11 unported of 18** | 1,274 | MATLAB-language plumbing with direct Python equivalents: `parseArgs`→keyword arguments, `deg2rad`→`np.radians`, `isBinary`→`bool`, `eucdist`→`scipy.spatial.distance`, `tprint`/`gifmaker`/`scalebar`/`shine`/`hotcold`→matplotlib. Only `rotation_matrix` and `gauss` had real content; both are ported privately |
-| **`pov_tree` + `pov_patch`** | 1,560 | POV-Ray scene export. A rendering pipeline for a specific external ray-tracer; PyVista covers publication figures |
-| **`x3d_tree`** | 251 | X3D mesh export for external 3D viewers |
+| ~~**`pov_tree` + `pov_patch`**~~ | 1,560 | Was declined as "a rendering pipeline for a specific external ray-tracer"; scheduled as V6 after all, show-file variants included |
+| ~~**`x3d_tree`**~~ | 251 | X3D mesh export for external 3D viewers; scheduled as V6 |
 | **`fix_tree` / `finetune_fix_tree` / `fix_tree_UI`** | 5,047 | MATLAB's own todo list flags these as incomplete |
-| **`plotsect_tree`** | 72 | Todo list: "has no options to begin with" |
+| ~~**`plotsect_tree`**~~ | 72 | Was listed here on the maintainers' "has no options to begin with" note; ported in B5 anyway (#64) since it is 30 lines with a real keyword signature |
 
 `utilities` and `gui` alone account for **10,283 of the 23,601 unported
 lines** — 44% of the apparent gap is code with no Python purpose.
@@ -210,7 +242,7 @@ Missing, in rough priority order:
 ## E. `T2N-master` — superseded, not ported
 
 52 `.m` files. T2N's purpose is to drive NEURON *from MATLAB* by generating
-`.hoc` files and shelling out to `nrniv`. `pytrees.neuron_bridge` talks to
+`.hoc` files and shelling out to `nrniv`. `pynetrees.neuron_bridge` talks to
 NEURON directly through its Python API, so the file-generation and
 process-management layers have no counterpart to port — the need they serve
 does not exist here. `t2n_setionchannels.m` is the exception: it belongs with
@@ -220,16 +252,23 @@ does not exist here. `t2n_setionchannels.m` is the exception: it belongs with
 
 ## Suggested order
 
-1. **Finish W3** — the silent gaps in §A, especially `resample_tree`'s method
-   and `plot_tree`'s `color`. These change results people already rely on.
-2. **`load_tree` dispatcher + `.neu`/`.nmf`** — completes W2; `h5py` is
-   already a dependency.
-3. **B1 density/hull machinery** — one dependency, five functions, and it
-   unblocks `stats_tree`'s remaining statistics.
-4. **W5 population tooling** — cheap once the return conventions settled.
-5. **`GC_biophys`** — the Active GC Model blocker. Substantial, and worth
-   scoping separately.
-6. **B4 generative pipeline** — the largest remaining block; needs B1 first.
+Items 1-4 and 6 of the original list are done -- W3's silent gaps, the
+`load_tree` dispatcher with `.neu`/`.nmf`, B1's density/hull machinery, W5
+(since superseded by V3's list-in/list-out rule, Design Decision #69) and
+B4's generative pipeline. `M_atten_tree`, then the only unported function
+in an otherwise complete `electrotonics`, is ported too. **V4 is done as
+well** (Design Decision #70): all twelve functions added to the MATLAB
+toolbox on 2026-08-26 are ported.
 
-`M_atten_tree` (31 LoC) is worth doing opportunistically: it is the only
-unported function in an otherwise complete `electrotonics`.
+What is left, in order (`REVIEW_PLAN_2.md` carries the detail):
+
+1. **V5 -- I/O**: v7.3 writing to lift `save_tree`'s 2 GB ceiling, and
+   `load_mtr`'s variable-selection rule.
+2. **V6 -- `pov_tree`, `x3d_tree`, `cyl_tree -dA`**: POV-Ray and X3D export
+   in full, show-file variants included. Wanted alongside
+   `pynetrees.blender`, not instead of it -- a `.pov`/`.x3d` file is a
+   portable artefact that needs no 300 MB dependency to produce.
+3. **V7 -- renames and small fixes**, cheap and better done once the above
+   settle the signatures.
+4. **`GC_biophys`** -- the Active GC Model blocker. Substantial, and worth
+   scoping separately.

@@ -1,4 +1,4 @@
-"""Tests for pytrees.neuron_bridge: Tree -> real NEURON simulation.
+"""Tests for pynetrees.neuron_bridge: Tree -> real NEURON simulation.
 
 Requires the `neuron` package (see pyproject.toml's `neuron` extra / the
 module docstring for why Windows needs the official binary installer
@@ -26,7 +26,7 @@ from scipy import sparse
 
 pytest.importorskip("neuron")
 
-from pytrees import (
+from pynetrees import (
     Tree,
     build_neuron_model,
     insert_mechanism,

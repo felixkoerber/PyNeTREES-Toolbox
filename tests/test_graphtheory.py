@@ -1,4 +1,4 @@
-"""Tests for pytrees.graphtheory: pure dA/topology primitives.
+"""Tests for pynetrees.graphtheory: pure dA/topology primitives.
 
 Hand-verified against a small fixed tree (see `_branchy_tree`):
 
@@ -18,8 +18,8 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees.graphtheory import _subtree_blocks
-from pytrees import (
+from pynetrees.graphtheory import _subtree_blocks
+from pynetrees import (
     hss_tree,
     B_tree,
     BO_tree,
@@ -462,7 +462,7 @@ def test_LO_tree_leaf_equals_its_own_path_length():
 
 
 def test_Pvec_tree_matches_explicit_ancestor_walk():
-    from pytrees import len_tree
+    from pynetrees import len_tree
 
     tree = sample_tree()
     v = len_tree(tree)

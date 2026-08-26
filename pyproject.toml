@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pytrees"
-version = "0.0.1"
+name = "pynetrees"
+version = "0.1.4"
 description = "Python port of the TREES toolbox for neuronal tree reconstruction, editing, analysis and synthesis."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,13 +33,26 @@ matlab = ["mat73>=0.60"]
 # it), so this extra exists only so that "I want .nmf" does not read as
 # "I want MATLAB support".
 nmf = ["h5py>=3.8"]
+# Image stacks. tifffile reads the multi-page TIFFs microscopes emit;
+# scikit-image supplies the 3D skeletonisation that replaces MATLAB's
+# hand-rolled thinning (see GUI_AND_STACKS.md).
+stacks = ["tifffile>=2023.7.10", "imageio>=2.31", "scikit-image>=0.22"]
+# Blender export and headless rendering (pynetrees.blender), superseding
+# MATLAB's pov_tree/x3d_tree. Deliberately NOT a default dependency: bpy is
+# a ~300 MB wheel, ships only for the exact Python version it was built
+# against, and pins numpy < 2. Nothing else in the package needs it, and
+# `import pynetrees` never imports pynetrees.blender.
+blender = ["bpy>=4.0"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pytrees = ["data/*.swc", "data/*.npz", "data/*.mtr"]
+pynetrees = ["data/*.swc", "data/*.npz", "data/*.mtr"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: renders an image through Blender; deselect with -m 'not slow'",
+]

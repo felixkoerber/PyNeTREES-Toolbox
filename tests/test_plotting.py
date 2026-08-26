@@ -1,4 +1,4 @@
-"""Tests for pytrees.plotting.
+"""Tests for pynetrees.plotting.
 
 PyVista-backed functions are smoke/structure-tested (they run headless via
 `off_screen=True`/`show=False`, which is the default): asserting a render
@@ -17,8 +17,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from pytrees import (
+from pynetrees import (
     BO_tree,
+    T_tree,
     Tree,
     chull_tree,
     dA_tree,
@@ -26,10 +27,12 @@ from pytrees import (
     flatten_tree,
     plot_tree,
     plot_mpl_tree,
+    idpar_tree,
     pointer_tree,
     sample_tree,
+    plotsect_tree,
     spread_tree,
-    spread_trees,
+    xplore_tree,
     tran_tree,
     vtext_tree,
     xdend_tree,
@@ -226,7 +229,7 @@ def test_dendrogram_tree_returns_axes_with_lines():
 
 
 # ---------------------------------------------------------------------------
-# spread_tree / spread_trees
+# spread_tree
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +246,7 @@ def test_spread_tree_avoids_overlap_for_two_wide_trees():
         )
 
     trees = [wide_tree(0.0), wide_tree(0.0)]
-    offsets = spread_tree(trees, dx=10.0, dy=10.0)
+    offsets = spread_tree(trees, dx=10.0, dy=10.0).offsets
     assert len(offsets) == 2
 
     def bbox(t, off):
@@ -259,16 +262,28 @@ def test_spread_tree_avoids_overlap_for_two_wide_trees():
     assert x_disjoint or y_disjoint
 
 
-def test_spread_trees_returns_translated_trees():
+def test_spread_tree_also_returns_the_translated_trees():
+    """One function returning both, rather than MATLAB's two differing only
+    in return type (REVIEW_PLAN P7)."""
     t1 = _small_geom_tree()
     t2 = _small_geom_tree()
-    spread = spread_trees([t1, t2], dx=20.0, dy=20.0)
+    result = spread_tree([t1, t2], dx=20.0, dy=20.0)
+    spread = result.trees
     assert len(spread) == 2
+    assert len(result.offsets) == 2
     assert all(t.n_nodes == t1.n_nodes for t in spread)
     # roots should no longer coincide
     assert not (
         spread[0].X[0] == spread[1].X[0] and spread[0].Y[0] == spread[1].Y[0]
     )
+
+
+def test_the_old_spread_trees_helper_is_gone():
+    """Merged into `spread_tree`, which returns both (#64), and the
+    deprecation shim removed with the rest (#67)."""
+    import pynetrees
+
+    assert not hasattr(pynetrees, "spread_trees")
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +345,69 @@ def test_chull_tree_2d_hull_works_on_a_planar_tree():
 def test_stats_tree_extras_survives_a_planar_tree():
     # stats_tree(extras=True) calls chull_tree; before the fix this crashed
     # with a QhullError on any flat morphology
-    import pytrees as pt
+    pytest.importorskip("skimage")
+    import pynetrees as pt
 
     flat = flatten_tree(sample_tree())
     res = pt.stats_tree(flat, extras=True)
     assert np.isnan(res["summary"]["hull_volume"].iloc[0])
+
+
+# ---------------------------------------------------------------------------
+# plotsect_tree / xplore_tree (B5)
+# ---------------------------------------------------------------------------
+
+
+def test_plotsect_tree_draws_the_ancestor_chain():
+    tree = sample_tree()
+    end = tree.n_nodes - 1
+    ax, indices = plotsect_tree(tree, (0, end), full_output=True)
+    idpar = idpar_tree(tree)
+    assert indices[0] == end
+    assert indices[-1] == 0
+    # consecutive entries are parent/child, i.e. it really is a path
+    assert all(idpar[a] == b for a, b in zip(indices[:-1], indices[1:]))
+    assert len(ax.get_lines()) == 1
+
+
+def test_plotsect_tree_refuses_a_path_that_is_not_directed():
+    """MATLAB indexes `ipar` blindly here and returns an empty selection --
+    a silently blank line -- when the start node is not an ancestor."""
+    tree = sample_tree()
+    terminals = np.flatnonzero(T_tree(tree))
+    with pytest.raises(ValueError, match="not an ancestor"):
+        plotsect_tree(tree, (terminals[-1], terminals[0]))
+
+
+def test_plotsect_tree_applies_its_offset():
+    tree = sample_tree()
+    end = tree.n_nodes - 1
+    plain = plotsect_tree(tree, (0, end)).get_lines()[0]
+    shifted = plotsect_tree(tree, (0, end), offset=(100.0, 0.0, 0.0)).get_lines()[0]
+    assert shifted.get_xdata()[0] == pytest.approx(plain.get_xdata()[0] + 100.0)
+
+
+@pytest.mark.parametrize("mode", ["nodes", "regions", "projections"])
+def test_xplore_tree_renders_every_mode(mode):
+    fig = xplore_tree(sample_tree(), mode=mode)
+    assert fig.axes
+    assert len(fig.axes) == (3 if mode == "projections" else 1)
+
+
+def test_xplore_tree_labels_regions_by_value_not_by_loop_position():
+    """MATLAB writes `tree.rnames{counter}`, indexing by the position in
+    the loop over unique regions rather than by the region value itself, so
+    a tree whose regions are not 1..n gets its labels shuffled."""
+    tree = sample_tree()
+    R = np.asarray(tree.R).copy()
+    R[:] = 1  # use only the *second* region name
+    sparse_regions = Tree(dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D,
+                          R=R, rnames=list(tree.rnames))
+    fig = xplore_tree(sparse_regions, mode="regions")
+    labels = [t.get_text() for t in fig.axes[0].texts]
+    assert labels == [tree.rnames[1]]
+
+
+def test_xplore_tree_rejects_an_unknown_mode():
+    with pytest.raises(ValueError, match="'nodes', 'regions' or 'projections'"):
+        xplore_tree(sample_tree(), mode="-1")

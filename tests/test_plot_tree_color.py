@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import pytrees as pt
+import pynetrees as pt
 
 pv = pytest.importorskip("pyvista")
 
@@ -73,7 +73,7 @@ def test_three_node_tree_reads_a_length_three_vector_as_rgb():
     dA = sparse.csr_matrix(([1, 1], ([1, 2], [0, 1])), shape=(3, 3))
     tiny = pt.Tree(dA=dA, X=np.arange(3.0), Y=np.zeros(3), Z=np.zeros(3),
                    D=np.ones(3), R=np.zeros(3, dtype=int), rnames=["d"])
-    from pytrees.plotting import _resolve_color
+    from pynetrees.plotting import _resolve_color
 
     flat, mapped, rgb = _resolve_color([1.0, 0.0, 0.0], tiny.n_nodes)
     assert flat is not None and mapped is None and rgb is None
