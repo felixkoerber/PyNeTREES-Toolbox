@@ -55,7 +55,7 @@ source .venv/bin/activate       # Windows: .venv\Scripts\activate
 ### 2. Install the package
 
 ```bash
-git clone https://github.com/<your-user>/pynetrees.git
+git clone https://github.com/felixkoerber/pynetrees.git
 cd pynetrees
 pip install -e ".[plot,dev]"
 ```
