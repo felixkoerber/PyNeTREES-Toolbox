@@ -44,6 +44,24 @@ stacks = ["tifffile>=2023.7.10", "imageio>=2.31", "scikit-image>=0.22"]
 # `import pynetrees` never imports pynetrees.blender.
 blender = ["bpy>=4.0"]
 dev = ["pytest>=8.0"]
+# Running the example notebooks in examples/. ipykernel is what lets Jupyter
+# execute any of them; the trame stack drives the live 3D widgets in
+# examples/plot.ipynb. Not needed by the package itself.
+notebook = [
+    "ipykernel>=6.0",
+    "ipywidgets>=8.0",
+    "trame>=3.0",
+    "trame-vtk>=2.0",
+    "trame-vuetify>=2.0",
+]
+# The recommended default install on Linux/macOS: everything except Blender.
+# bpy is left out on purpose -- it is a ~300 MB wheel that pins numpy < 2
+# (see above).
+all = ["pynetrees[all-no-neuron,neuron]"]
+# The recommended default on Windows, where NEURON has no pip wheel: same as
+# `all` minus `neuron`. Install NEURON from the official binary installer
+# afterwards (see the README).
+all-no-neuron = ["pynetrees[plot,matlab,nmf,stacks,notebook,dev]"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -41,38 +41,54 @@ Nothing in this repo does this for you, and installing a scientific stack straig
 into a global or `base` Python is easy to regret later.
 
 ```bash
-conda create -n pynetrees python=3.11 -y
-conda activate pynetrees
-```
-
-or with `venv`:
-
-```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+# Linux / macOS:
+source .venv/bin/activate
+# Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# Windows (cmd.exe):
+.venv\Scripts\activate.bat
 ```
+
+Prefer conda? `conda create -n pynetrees python=3.11 -y && conda activate pynetrees`
+works just as well — the rest of these notes are the same either way.
 
 ### 2. Install the package
 
 ```bash
 git clone https://github.com/<your-user>/pynetrees.git
 cd pynetrees
-pip install -e ".[plot,dev]"
+
+# Linux / macOS — everything:
+pip install -e ".[all]"
+
+# Windows — everything except NEURON (no pip wheel; see step 4):
+pip install -e ".[all-no-neuron]"
 ```
+
+`all` pulls in every runtime dependency — plotting, NEURON, all the I/O
+formats, image stacks, the notebook stack (ipykernel + trame), and pytest —
+**except Blender** (`bpy` is a ~300 MB wheel that pins `numpy < 2`; add it
+with `".[all,blender]"` only if you need it, and see the note below).
+`all-no-neuron` is the same set with the `neuron` line dropped, so the
+install succeeds on Windows where `pip install neuron` cannot.
 
 The extras are separable if you want a smaller install:
 
 | Command | What you get |
 |---|---|
 | `pip install -e .` | Core only — NumPy, SciPy, pandas |
+| `pip install -e ".[all]"` | **Everything except Blender** — the default on Linux/macOS |
+| `pip install -e ".[all-no-neuron]"` | Same as `all` minus NEURON — the default on Windows |
 | `pip install -e ".[plot]"` | + PyVista, matplotlib, scikit-image — `pynetrees.plotting`, `hull_tree`'s 3D isosurface, and the tutorials |
 | `pip install -e ".[matlab]"` | + mat73 — **v7.3 `.mtr`/`.mat` files**, which is what current MATLAB writes |
 | `pip install -e ".[nmf]"` | + h5py — `.nmf` files |
 | `pip install -e ".[stacks]"` | + tifffile, imageio, scikit-image — `pynetrees.stacks` |
+| `pip install -e ".[notebook]"` | + ipykernel, ipywidgets, trame — run the notebooks in `examples/` |
 | `pip install -e ".[blender]"` | + bpy — `pynetrees.blender`. A ~300 MB wheel that **pins `numpy < 2`**; see the note below |
 | `pip install -e ".[neuron]"` | + NEURON (Linux/macOS only — see step 4) |
 | `pip install -e ".[dev]"` | + pytest |
-| `pip install -e ".[plot,dev]"` | The usual working set |
+| `pip install -e ".[plot,dev]"` | A lean working set for hacking on the package |
 
 To reproduce the exact versions the test suite is run against instead, use the
 pinned set — then install the package itself:

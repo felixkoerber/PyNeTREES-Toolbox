@@ -5,16 +5,22 @@
 #   pip install -r requirements.txt
 #   pip install -e . --no-deps      # install pynetrees itself in editable mode
 #
-# pyproject.toml defines the same dependencies as proper extras, if you'd
-# rather install a subset:
+# pyproject.toml defines the same dependencies as proper extras. For an
+# unpinned install, use the default for your platform -- everything below
+# except Blender:
+#   pip install -e ".[all]"            # Linux/macOS: plot + neuron + matlab
+#                                      #   + nmf + stacks + notebook + dev
+#   pip install -e ".[all-no-neuron]"  # Windows: same, minus neuron (no wheel)
+# Or pick a subset:
 #   pip install -e .                # core only (numpy, scipy, pandas)
 #   pip install -e ".[plot]"        # + pyvista, matplotlib, scikit-image
 #   pip install -e ".[matlab]"      # + mat73, for v7.3 .mtr/.mat
 #   pip install -e ".[nmf]"         # + h5py, for .nmf
 #   pip install -e ".[stacks]"      # + tifffile, imageio, scikit-image
+#   pip install -e ".[notebook]"    # + ipykernel, ipywidgets, trame
 #   pip install -e ".[blender]"     # + bpy
 #   pip install -e ".[dev]"         # + pytest
-#   pip install -e ".[plot,dev]"    # the usual working set
+#   pip install -e ".[plot,dev]"    # a lean working set for hacking on it
 #
 # NEURON is deliberately absent: there is no Windows pip wheel, so it is
 # installed separately (see the README). The NEURON tests skip without it.
