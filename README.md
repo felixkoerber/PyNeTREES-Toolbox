@@ -56,6 +56,7 @@ works just as well — the rest of these notes are the same either way.
 ### 2. Install the package
 
 ```bash
+<<<<<<< HEAD
 git clone https://github.com/<your-user>/pynetrees.git
 cd pynetrees
 
@@ -64,6 +65,11 @@ pip install -e ".[all]"
 
 # Windows — everything except NEURON (no pip wheel; see step 4):
 pip install -e ".[all-no-neuron]"
+=======
+git clone https://github.com/felixkoerber/PyNeTREES-Toolbox
+cd PyNeTREES-Toolbox
+pip install -e ".[plot,dev]"
+>>>>>>> 11cd24ff3ba19e19266541a483d36061d0fe1371
 ```
 
 `all` pulls in every runtime dependency — plotting, NEURON, all the I/O
