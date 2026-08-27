@@ -56,8 +56,8 @@ works just as well — the rest of these notes are the same either way.
 ### 2. Install the package
 
 ```bash
-git clone https://github.com/<your-user>/pynetrees.git
-cd pynetrees
+git clone https://github.com/felixkoerber/PyNeTREES-Toolbox
+cd PyNeTREES-Toolbox
 
 # Linux / macOS — everything:
 pip install -e ".[all]"
