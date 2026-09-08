@@ -34,6 +34,30 @@ def _reindex_electrical(value, order: np.ndarray):
     return np.asarray(value)[order]
 
 
+def _reindex_meta(meta: dict, order: np.ndarray, n_nodes: int) -> dict:
+    """Carry ad-hoc :attr:`Tree.meta` entries through a reindex.
+
+    An entry is treated as **per-node** -- and so reordered/subset with the
+    nodes -- exactly when it is a sequence of length ``n_nodes``. Anything
+    else (a scalar, a string, a dict, an array of some other length) is
+    metadata about the cell as a whole and passes through untouched.
+
+    Length is the only signal available: MATLAB's tree struct carries ad-hoc
+    fields with no type information either, and `delete_tree`/`resample_tree`
+    there make the same length-based decision. Being explicit about the rule
+    is what keeps it from being surprising.
+    """
+    out = {}
+    for key, value in meta.items():
+        if isinstance(value, np.ndarray) and value.shape[:1] == (n_nodes,):
+            out[key] = value[order]
+        elif isinstance(value, (list, tuple)) and len(value) == n_nodes:
+            out[key] = type(value)(value[i] for i in order)
+        else:
+            out[key] = value
+    return out
+
+
 class Tree:
     """A neuronal tree: nodes plus directed parent adjacency and metrics.
 
@@ -67,16 +91,33 @@ class Tree:
     Cm : float | np.ndarray | None
         Specific membrane capacitance [uF/cm^2], scalar or per-node. Only
         needed by the time-stepping functions (``LIF_tree``/``AdExLIF_tree``).
+    meta : dict
+        Ad-hoc, caller-owned data travelling with the tree -- the Python
+        stand-in for tacking an extra field onto MATLAB's tree struct
+        (``tree.myfield = ...``), which the MATLAB toolbox does freely and
+        which nothing in a ``__slots__`` class would otherwise allow.
+
+        Nothing in the package reads or writes it; it exists so that
+        per-node annotations (a synapse count, a channel density, an
+        experimental label) survive the transforms. Entries whose length is
+        ``n_nodes`` are **reordered and subset with the nodes** by
+        :meth:`reindexed` -- and so by ``delete_tree``, ``sort_tree``,
+        ``resample_tree`` and everything else built on it; entries of any
+        other shape are treated as whole-cell metadata and copied across
+        unchanged. See :func:`_reindex_meta`.
+
+        ``.npz`` round-trips it (:func:`~pynetrees.io.save_npz`); the other
+        formats have nowhere to put it and drop it.
     """
 
     __slots__ = (
         "dA", "X", "Y", "Z", "D", "R", "rnames", "name", "frustum",
-        "Ri", "Gm", "Cm",
+        "Ri", "Gm", "Cm", "meta",
     )
 
     def __init__(
         self, dA, X, Y, Z, D, R, rnames, name: str = "", frustum: bool = False,
-        Ri=None, Gm=None, Cm=None,
+        Ri=None, Gm=None, Cm=None, meta=None,
     ):
         self.dA = sparse.csr_matrix(dA)
         self.X = np.asarray(X, dtype=float)
@@ -90,6 +131,9 @@ class Tree:
         self.Ri = Ri
         self.Gm = Gm
         self.Cm = Cm
+        # copied, not aliased: two trees sharing one dict would let an edit
+        # to a derived tree reach back into the one it came from
+        self.meta = {} if meta is None else dict(meta)
 
     @property
     def n_nodes(self) -> int:
@@ -209,7 +253,8 @@ class Tree:
         Works both for permutations (``len(order) == n_nodes``, e.g. a
         canonical sort) and subsets (``len(order) < n_nodes``, e.g. cutting
         out a subtree). ``rnames`` is shared unchanged; ``R`` values carry
-        over as-is since they still index into it.
+        over as-is since they still index into it. Per-node :attr:`meta`
+        entries move with their nodes (see :func:`_reindex_meta`).
         """
         order = np.asarray(order, dtype=int)
         dA = self.dA.tocsr()[order][:, order]
@@ -226,37 +271,57 @@ class Tree:
             Ri=_reindex_electrical(self.Ri, order),
             Gm=_reindex_electrical(self.Gm, order),
             Cm=_reindex_electrical(self.Cm, order),
+            meta=_reindex_meta(self.meta, order, self.n_nodes),
         )
 
-    def with_coords(
-        self,
-        X: np.ndarray | None = None,
-        Y: np.ndarray | None = None,
-        Z: np.ndarray | None = None,
-        D: np.ndarray | None = None,
-        name: str | None = None,
-    ) -> "Tree":
-        """Return a copy with some coordinate/diameter arrays replaced.
+    #: Every constructor argument, in order. :meth:`copy` uses it to carry
+    #: attributes across, so adding a field to ``__init__`` extends ``copy``
+    #: (and every transform built on it) without a second edit -- which is
+    #: how ``Ri``/``Gm``/``Cm`` came to be silently dropped by a dozen
+    #: editing functions in the first place.
+    _FIELDS = (
+        "dA", "X", "Y", "Z", "D", "R", "rnames", "name", "frustum",
+        "Ri", "Gm", "Cm", "meta",
+    )
 
-        Used by the geometry transforms in ``metrics.py`` (``scale_tree``,
-        ``tran_tree``, ``rot_tree``, ...), which all return a *new* Tree
-        rather than mutating in place or relying on a global trees array the
-        way the MATLAB originals optionally do.
+    def copy(self, **overrides) -> "Tree":
+        """Return a copy of this tree with the named attributes replaced.
+
+        The single way to build a *derived* tree: everything not named in
+        ``overrides`` is carried over, so a transform cannot silently lose a
+        field it never thought about. Used by the geometry transforms in
+        ``metrics.py`` (``scale_tree``, ``tran_tree``, ``rot_tree``, ...) and
+        the editing functions in ``edit.py``, which all return a **new** Tree
+        rather than mutating in place or writing into a global trees array
+        the way the MATLAB originals optionally do::
+
+            moved   = tree.copy(X=tree.X + 10)
+            renamed = tree.copy(name="shifted")
+            rebuilt = tree.copy(dA=new_dA, X=x, Y=y, Z=z, D=d, R=r)
+
+        Note that this is a **shallow** copy of the arrays: overriding ``X``
+        gives the new tree the array you pass, while the arrays you do not
+        override are shared with the original. That is what makes it cheap,
+        and it is safe as long as transforms build new arrays instead of
+        writing into the ones they were given -- which is the convention
+        throughout the package.
+
+        Raises
+        ------
+        TypeError
+            If ``overrides`` names something that is not a Tree field --
+            catching ``tree.copy(Xs=...)`` at the call rather than silently
+            returning an unmodified tree.
         """
-        return Tree(
-            dA=self.dA,
-            X=self.X if X is None else X,
-            Y=self.Y if Y is None else Y,
-            Z=self.Z if Z is None else Z,
-            D=self.D if D is None else D,
-            R=self.R,
-            rnames=self.rnames,
-            name=self.name if name is None else name,
-            frustum=self.frustum,
-            Ri=self.Ri,
-            Gm=self.Gm,
-            Cm=self.Cm,
-        )
+        unknown = set(overrides) - set(self._FIELDS)
+        if unknown:
+            raise TypeError(
+                f"copy() got unexpected field(s) {sorted(unknown)}; "
+                f"Tree fields are {list(self._FIELDS)}"
+            )
+        fields = {name: getattr(self, name) for name in self._FIELDS}
+        fields.update(overrides)
+        return Tree(**fields)
 
     def __repr__(self) -> str:
         # regions are the field you most often need to look up before doing

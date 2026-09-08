@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
+import pynetrees as pt
 from pynetrees import Tree, sample_tree, ver_tree
 
 
@@ -105,3 +106,86 @@ def test_repr_includes_regions():
     tree = _tiny_tree()
     tree.rnames = ["soma", "dend"]
     assert "soma" in repr(tree)
+
+
+# ---------------------------------------------------------------------------
+# Tree.copy / ad-hoc meta / per-node fields surviving the transforms
+# ---------------------------------------------------------------------------
+
+
+def _electrical_sample():
+    tree = pt.repair_tree(pt.sample_tree())
+    tree.Ri, tree.Gm, tree.Cm = 100.0, 1 / 2500.0, 1.0
+    tree.meta["per_node"] = np.arange(tree.n_nodes, dtype=float)
+    tree.meta["whole_cell"] = "GC-2026"
+    return tree
+
+
+def test_copy_carries_every_field_it_was_not_asked_to_change():
+    tree = _electrical_sample()
+    moved = tree.copy(X=tree.X + 10.0)
+
+    np.testing.assert_allclose(moved.X, tree.X + 10.0)
+    assert (moved.Ri, moved.Gm, moved.Cm) == (tree.Ri, tree.Gm, tree.Cm)
+    assert moved.frustum == tree.frustum
+    assert moved.meta["whole_cell"] == "GC-2026"
+    np.testing.assert_array_equal(moved.meta["per_node"], tree.meta["per_node"])
+
+
+def test_copy_rejects_a_field_name_it_does_not_have():
+    """A typo'd field would otherwise return an unmodified tree and be
+    blamed on the transform rather than on the call."""
+    with pytest.raises(TypeError, match="unexpected field"):
+        _electrical_sample().copy(Xs=np.zeros(3))
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        pytest.param(lambda t: pt.delete_tree(t, [5, 6, 7]), id="delete_tree"),
+        pytest.param(lambda t: pt.resample_tree(t, 10.0), id="resample_tree"),
+        pytest.param(pt.root_tree, id="root_tree"),
+        pytest.param(pt.repair_tree, id="repair_tree"),
+        pytest.param(pt.elimt_tree, id="elimt_tree"),
+        pytest.param(lambda t: pt.sort_tree(t, by="lo"), id="sort_tree"),
+        pytest.param(lambda t: pt.redirect_tree(t, 50), id="redirect_tree"),
+        pytest.param(lambda t: pt.tran_tree(t, [1.0, 2.0, 3.0]), id="tran_tree"),
+        pytest.param(lambda t: pt.scale_tree(t, 2.0), id="scale_tree"),
+    ],
+)
+def test_transforms_keep_the_electrical_properties_and_meta(transform):
+    """These used to be dropped: every editing function built a bare `Tree(...)`
+    and simply never mentioned Ri/Gm/Cm, so `delete_tree(tree, [...])` handed
+    back a tree that failed later in `build_neuron_model` with "no Ri set"."""
+    tree = _electrical_sample()
+    out = transform(tree)
+
+    assert out.Ri == 100.0
+    assert out.Gm == 1 / 2500.0
+    assert out.Cm == 1.0
+    assert out.meta["whole_cell"] == "GC-2026"
+    assert len(out.meta["per_node"]) == out.n_nodes
+
+
+def test_per_node_meta_follows_the_nodes_through_a_subset():
+    tree = _electrical_sample()
+    sub = tree.reindexed(np.arange(0, tree.n_nodes, 2))
+    np.testing.assert_array_equal(
+        sub.meta["per_node"], np.arange(0, tree.n_nodes, 2, dtype=float)
+    )
+
+
+def test_meta_of_another_length_is_left_alone():
+    """Only length-n_nodes entries are per-node; anything else is metadata
+    about the cell and must not be silently re-ordered."""
+    tree = _electrical_sample()
+    tree.meta["three_numbers"] = np.array([1.0, 2.0, 3.0])
+    sub = tree.reindexed(np.arange(10))
+    np.testing.assert_array_equal(sub.meta["three_numbers"], [1.0, 2.0, 3.0])
+
+
+def test_meta_dict_is_not_shared_between_derived_trees():
+    tree = _electrical_sample()
+    other = tree.copy()
+    other.meta["whole_cell"] = "changed"
+    assert tree.meta["whole_cell"] == "GC-2026"

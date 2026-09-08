@@ -6,7 +6,7 @@
 conda run -n pynetrees python scripts/gen_function_reference.py
 ```
 
-**173 public names** as of this generation (156 functions, 16 result types).
+**184 public names** as of this generation (163 functions, 18 result types).
 
 For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md). This page is the detailed counterpart: full docstrings, in full.
 
@@ -21,8 +21,8 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [I/O — NeuroML](#io-neuroml) (1)
 - [I/O — NEURON `.hoc`](#io-neuron-hoc) (3)
 - [I/O — native (`.npz`, format dispatch)](#io-native-npz-format-dispatch) (4)
-- [Bundled sample data](#bundled-sample-data) (5)
-- [Topology](#topology) (22)
+- [Bundled sample data](#bundled-sample-data) (7)
+- [Topology](#topology) (23)
 - [Geometry and metrics](#geometry-and-metrics) (24)
 - [Editing](#editing) (14)
 - [Construction](#construction) (15)
@@ -34,6 +34,8 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [Plotting](#plotting) (12)
 - [Image stacks](#image-stacks) (8)
 - [NEURON simulation](#neuron-simulation) (4)
+- [Optional dependencies](#optional-dependencies) (1)
+- [Granule-cell model](#granule-cell-model) (5)
 - [Blender export (optional)](#blender-export-optional) (5)
 
 ## Data model
@@ -78,6 +80,23 @@ Gm : float | np.ndarray | None
 Cm : float | np.ndarray | None
     Specific membrane capacitance [uF/cm^2], scalar or per-node. Only
     needed by the time-stepping functions (``LIF_tree``/``AdExLIF_tree``).
+meta : dict
+    Ad-hoc, caller-owned data travelling with the tree -- the Python
+    stand-in for tacking an extra field onto MATLAB's tree struct
+    (``tree.myfield = ...``), which the MATLAB toolbox does freely and
+    which nothing in a ``__slots__`` class would otherwise allow.
+
+    Nothing in the package reads or writes it; it exists so that
+    per-node annotations (a synapse count, a channel density, an
+    experimental label) survive the transforms. Entries whose length is
+    ``n_nodes`` are **reordered and subset with the nodes** by
+    :meth:`reindexed` -- and so by ``delete_tree``, ``sort_tree``,
+    ``resample_tree`` and everything else built on it; entries of any
+    other shape are treated as whole-cell metadata and copied across
+    unchanged. See :func:`_reindex_meta`.
+
+    ``.npz`` round-trips it (:func:`~pynetrees.io.save_npz`); the other
+    formats have nowhere to put it and drop it.
 
 ### `ver_tree(tree: 'Tree', quiet: 'bool' = False) -> 'list[str]'`
 
@@ -486,6 +505,12 @@ what was on disk. Loading and repairing are kept separate here so that
 
 Save a Tree to pynetrees' native ``.npz``-based format.
 
+Stores everything a :class:`~pynetrees.Tree` holds: topology,
+coordinates, regions, the ``frustum`` flag, whichever of
+``Ri``/``Gm``/``Cm`` are set, and :attr:`~pynetrees.Tree.meta` (numpy
+arrays natively, the rest as JSON). This is the only format that does --
+see :func:`save_tree`'s table for what the others drop.
+
 ### `save_tree(tree: 'Tree | list[Tree]', path: 'str | Path', **kwargs) -> 'Path'`
 
 Save a tree in the format named by ``path``'s extension.
@@ -536,6 +561,44 @@ This file could not be read at all before Design Decision #52: at its
 nesting depth ``scipy.io.loadmat`` returns ``mat_struct`` objects even
 with ``simplify_cells=True``, which the ``.mtr`` flattener did not
 recognise.
+
+### `gc_tree(index: 'int' = 0) -> 'Tree'`
+
+One dentate granule cell from :func:`gc_trees` (default: the first).
+
+The cell the Active GC Model scripts use by default.
+
+Returns
+-------
+Tree
+
+### `gc_trees() -> 'list[Tree]'`
+
+The eight dentate granule cells of Beining et al. (2017).
+
+``SH_07_all_repairedandsomaAIS_MLyzed.mtr`` from the Active GC Model
+package -- reconstructions repaired, somata and axon initial segments
+reconstructed, and molecular-layer boundaries assigned, which is what
+gives them the region names :func:`~pynetrees.GC_init` expects:
+``soma``, ``GCL``, ``SGCL``, ``adendIML``/``adendMML``/``adendOML``,
+``axonh``, ``axon``.
+
+Bundled because a model is not reproducible without the morphology it
+was fitted to. ``GC_init`` defaults to the matching biophysics, so::
+
+    gc = GC_init(gc_tree(), cut_axon=True, mech_library=...)
+
+is the published cell end to end.
+
+Returns
+-------
+list[Tree]
+    Eight cells of 2900-4300 nodes each.
+
+See Also
+--------
+gc_tree : just the first one.
+pynetrees.gc_model.gc_mod_path : the ``.mod`` sources to compile.
 
 ### `hsn_tree() -> 'Tree'`
 
@@ -648,25 +711,21 @@ rescans it once per branch. This is the same decomposition computed
 with a heap in ``O(n log n)``; ``tests/test_persistence.py`` checks the
 two agree node-for-node against MATLAB's own output.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `BO_tree(tree: 'Tree') -> 'np.ndarray'`
 
 Branch order of each node: how many branch points lie between it and
 the root (root itself has branch order 0).
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
-
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
 ### `B_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -714,12 +773,12 @@ equivalence ``LO == PL + (sum of PL over descendants)`` was verified
 exactly (max abs difference 0.0) on hand-built trees and on both
 bundled reconstructions before this replaced the transliteration.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `PL_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -734,12 +793,12 @@ per depth level. That is idiomatic and fast in MATLAB, but transliterated
 to SciPy it costs one Python-level call per level -- 1624 of them on a
 real granule cell, ~37 ms against ~2 ms here. See also :func:`LO_tree`.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `Pvec_tree(tree: 'Tree', v: 'np.ndarray | None' = None) -> 'np.ndarray'`
 
@@ -770,13 +829,13 @@ pre-order, which is O(n_nodes). The previous version summed a prebuilt
 ``n_nodes x max_depth`` (49 MB, 6.1M entries for a real granule cell),
 so it was the worst-scaling function in the toolbox at 3.4x superlinear.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `T_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -796,22 +855,22 @@ run ``repair_tree`` first if the tree may have trifurcations.
 With ``van_pelt=True``, uses Van Pelt's tree-asymmetry index instead:
 ``abs(v1 - v2) / (v1 + v2 - 2)``.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``vec`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``vec`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `child_tree(tree: 'Tree', v: 'np.ndarray | None' = None) -> 'np.ndarray'`
 
 For each node, the sum of ``v`` over *all* of its descendants
 (excluding itself). Default ``v`` is all-ones, giving descendant counts.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
-### `dissect_tree(tree: 'Tree', by_region: 'bool' = True, *, with_positions: 'bool' = False)`
+### `dissect_tree(tree: 'Tree', by_region: 'bool' = True, *, full_output: 'bool' = False)`
 
 Group nodes into sections delimited by branch points, termination
 points, and (optionally) region changes.
@@ -848,12 +907,12 @@ root-to-itself entry, which callers building a new `dA` from `sect`
 testing against a real reconstruction whose root does branch, which
 none of the earlier hand-built test fixtures did.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `idchild_tree(tree: 'Tree', nodes=None, first_only: 'bool' = False) -> 'np.ndarray'`
 
@@ -863,9 +922,9 @@ Returns an ``(len(nodes), width)`` int array, :data:`NO_PARENT`-padded,
 where ``width`` is the largest number of children found (MATLAB hardcodes
 ``width=2``, silently truncating any trifurcation; this port doesn't).
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `idpar_tree(tree: 'Tree', root_self: 'bool' = True) -> 'np.ndarray'`
 
@@ -883,14 +942,23 @@ root_self : bool, default True
     instead, which is what you want when you are about to *walk* the
     parent chain and need a stopping condition.
 
+    **Never index with the result of ``root_self=False``.** ``-1`` is
+    a valid NumPy index, so ``v[idpar]`` silently gives the root the
+    *last* node's value instead of raising -- a plausible number that
+    nothing downstream will question. Test ``!= NO_PARENT`` first, or
+    keep the default ``root_self=True``, where indexing is well
+    defined because the root refers to itself. To follow the chain up
+    to the root, reach for :func:`path_to_root` rather than writing
+    the loop yourself.
+
 Returns
 -------
 np.ndarray
     Integer array of length ``n_nodes``.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `ipar_tree(tree: 'Tree', terminals_only: 'bool' = False, nodes=None) -> 'np.ndarray'`
 
@@ -923,9 +991,65 @@ that reason. Reach for it when you genuinely need arbitrary ancestor
 queries, and prefer ``terminals_only=True`` when you need terminal
 segments, since that form is dramatically smaller.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
+
+### `path_to_root(tree: 'Tree', node: 'int') -> 'np.ndarray'`
+
+The chain of nodes from ``node`` up to the root, inclusive.
+
+``[node, parent(node), ..., root]`` with no padding -- the trimmed form
+of one row of :func:`ipar_tree`, which is what callers actually want
+when they are following a dendrite back to the soma.
+
+It exists because the hand-written version of this loop is a reliable
+source of off-by-one errors. The obvious spelling is::
+
+    parent = idpar_tree(tree, root_self=False)
+    chain = [node]
+    while parent[chain[-1]] > 0:          # WRONG in two ways
+        chain.append(parent[chain[-1]])
+
+``> 0`` silently drops the root whenever the root is node ``0`` (which
+it is after :func:`~pynetrees.sort_tree`), and ``>= 0`` is only right
+because :data:`~pynetrees.NO_PARENT` is ``-1``: write ``!= NO_PARENT``
+and the intent survives. Worse, using the sentinel as an index at all --
+``v[parent[root]]`` -- reads the *last* node of the array under NumPy's
+negative indexing and returns a plausible number rather than failing.
+
+Parameters
+----------
+tree : Tree
+node : int
+    Where to start. Usually a terminal, from
+    :func:`~pynetrees.T_tree`.
+
+Returns
+-------
+np.ndarray
+    Node indices, starting at ``node`` and ending at the root.
+
+Examples
+--------
+The second-longest terminal path, root-ward::
+
+    plen = Pvec_tree(tree, len_tree(tree))
+    tips = np.flatnonzero(T_tree(tree))
+    chain = path_to_root(tree, tips[np.argsort(plen[tips])[-2]])
+
+See Also
+--------
+ipar_tree : the same chains for every node at once, ``-1``-padded.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``node`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `ratio_tree(tree: 'Tree', v: 'np.ndarray | None' = None) -> 'np.ndarray'`
 
@@ -963,9 +1087,9 @@ UserWarning
     trifurcation, so the result is no longer binary -- matching the
     MATLAB original's documented restriction.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `rindex_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1010,11 +1134,11 @@ is worth stating plainly: **node indices are not comparable between
 MATLAB and pynetrees after a sort.** Do not cross-reference "node 417"
 between the two toolboxes.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `strahler_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1022,12 +1146,12 @@ Strahler number of each node (terminals are 1; a node is
 ``max(children) + 1`` if 2+ children tie for the max, else
 ``max(children)``).
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `sub_tree(tree: 'Tree', inode: 'int', with_tree: 'bool' = True) -> 'SubTree'`
 
@@ -1065,9 +1189,9 @@ node's children as ``dA[:, node].toarray()``, which materialises a dense
 length-``n_nodes`` column *per visited node* and makes a single BFS
 O(n_nodes^2) -- 514 ms on that same granule cell, against ~1.7 ms here.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `typeN_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1098,12 +1222,12 @@ dim : {2, 3}, optional
     Default 3. Pass ``2`` for the length of the XY projection, which is
     what to compare against a 2D reconstruction.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `Scaled`
 
@@ -1120,9 +1244,9 @@ Result of :func:`scaleS_tree` / :func:`scaleV_tree`.
 Angle (radians) between the two daughter branches at each branch
 point (NaN elsewhere). Requires strictly binary branch points.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `angleBd2_tree(tree: 'Tree', dist: 'int' = 5) -> 'np.ndarray'`
 
@@ -1144,12 +1268,12 @@ Returns
 np.ndarray
     Angle [radians] per branch point; ``NaN`` at non-binary ones.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `angleBd_tree(tree: 'Tree', dist: 'int' = 5) -> 'np.ndarray'`
 
@@ -1187,12 +1311,12 @@ From `new-functions/`, i.e. code the MATLAB maintainers had not yet
 folded into the toolbox proper. Neither variant has a documented
 default for ``dist``; 5 is this port's choice.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `bin_tree(tree: 'Tree | list[Tree]', v: 'np.ndarray | None' = None, bins=10)`
 
@@ -1243,9 +1367,9 @@ MATLAB's ``'-dA'`` output form -- the same geometry as sparse matrices --
 is deliberately not ported: the MATLAB source's own comment on that
 branch reads "SLOW!!", and nothing in the toolbox calls it.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `direction_tree(tree: 'Tree', normalize: 'bool' = True) -> 'np.ndarray'`
 
@@ -1254,18 +1378,18 @@ branch reads "SLOW!!", and nothing in the toolbox calls it.
 The root has no real parent direction; it's set to node 1's direction as
 a placeholder, matching the MATLAB original.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `dist_tree(tree: 'Tree', distances) -> 'np.ndarray'`
 
 Boolean ``(n_nodes, len(distances))`` matrix: True wherever a node's
 segment crosses a given path distance [um] from the root.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `eucl_tree(tree: 'Tree', point=None, dim: 'int | None' = None) -> 'np.ndarray'`
 
@@ -1289,12 +1413,12 @@ np.ndarray
     Distance per node [um]. Contrast :func:`~pynetrees.Pvec_tree`, which
     measures *along* the tree rather than through space.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `flatten_tree(tree: 'Tree') -> 'Tree'`
 
@@ -1302,11 +1426,11 @@ Flatten a tree onto the XY plane, conserving each segment's length
 (subtrees are shifted outward in X/Y to compensate for the lost Z
 extent, exactly as the 3D segment length is preserved in 2D).
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `flip_tree(tree: 'Tree', axis: 'str' = 'x') -> 'Tree'`
 
@@ -1327,11 +1451,11 @@ Notes
 Mirrors about :attr:`Tree.root`, not node 0 -- see :func:`scale_tree`'s
 note and Design Decision #48.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `gene_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1345,12 +1469,12 @@ draws a figure per group, which is `plot_tree`'s job here. The batch
 half of it is: a list of trees gives a list of genes, and
 ``np.vstack`` pools them if that is what the comparison wants.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `len_tree(tree: 'Tree', dim: 'int | None' = None) -> 'np.ndarray'`
 
@@ -1370,9 +1494,9 @@ np.ndarray
     Length per node [um]. The root is 0, having no parent segment.
     ``tree.total_length`` is the sum of this.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `morph_tree(tree: 'Tree', v: 'np.ndarray | None' = None) -> 'Tree'`
 
@@ -1381,12 +1505,12 @@ preserving branch angles and topology -- a META-FUNCTION: e.g. passing
 the original ``len_tree`` output back in regrows the original geometry
 (except for originally-zero-length segments, which can't be recovered).
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `rot_tree(tree: 'Tree', deg=(0.0, 0.0, 90.0), mode: 'str | None' = None, *, nodes=None, exclude_regions=('axon',), align_region=None) -> 'Tree'`
 
@@ -1433,11 +1557,11 @@ MATLAB's docstring says it does -- the MATLAB ``-m3d`` branch never
 reads ``DEG`` at all, so that promise is unimplemented there. ``nodes=``
 is the parameter it should have been.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `scaleS_tree(tree: 'Tree', target: 'float' = 1000000.0, *, radius: 'int | None' = None, resample: 'bool' = True, method: 'str' = 'close', shrink: 'float' = 0.5) -> 'Scaled'`
 
@@ -1476,13 +1600,13 @@ corrects most of what the first misses; ``error`` reports what is left
 rather than leaving the caller to discover it, which is the part MATLAB
 prints to the console and discards.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``target`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``target`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `scaleV_tree(tree: 'Tree', target: 'float' = 1000000.0, *, shrink: 'float' = 0.5, dim: 'int | None' = None) -> 'Scaled'`
 
@@ -1515,13 +1639,13 @@ scales exactly as ``factor ** dim``; ``error`` is numerical rather than
 systematic. MATLAB carries a ``% scale volume again`` comment followed
 by no second scaling, which is consistent with the same conclusion.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``target`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``target`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `scale_tree(tree: 'Tree', fac=2.0, center: 'bool' = True, scale_diameter: 'bool' = True) -> 'Tree'`
 
@@ -1551,11 +1675,11 @@ correct only for a tree that has been through ``sort_tree``. On a
 hand-built or freshly loaded tree it scaled about an arbitrary node and
 produced a plausible-looking but wrong result (Design Decision #48).
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `surf_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1591,11 +1715,11 @@ values carried across, not a real discrepancy. MATLAB's default is
 so "per default sets tree root to origin" and "default DD = node 1" are
 the same statement, not two competing ones.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `vol_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1612,11 +1736,11 @@ exceeding ``tz`` [um] is subtracted from the entire downstream subtree.
 
 Returns ``(new_tree, jumped_nodes)``.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -1630,12 +1754,12 @@ Average segment length [um] between branch/termination points, after
 collapsing every continuation point (a measure of typical inter-branch
 spacing, independent of how densely the reconstruction was sampled).
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `cat_tree(tree1: 'Tree', tree2: 'Tree', inode1: 'int | None' = None, inode2: 'int' = 0, keep_regions: 'bool' = False) -> 'Tree'`
 
@@ -1656,10 +1780,10 @@ splitting only kicks in for a specific option combination and is
 documented as broken for the default case (todo list: "delete_tree |
 multiple trees doesn't work yet").
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``inodes`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``inodes`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `elim0_tree(tree: 'Tree', keep_regions: 'bool' = False) -> 'Tree'`
 
@@ -1698,9 +1822,9 @@ tuple for information almost none of them used. When nothing changes,
 that fact now goes to :mod:`logging` at debug level, so library code
 stays quiet by default but the information is still recoverable.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `insert_tree(tree: 'Tree', X, Y, Z, D, parent, R=None, *, full_output: 'bool' = False)`
 
@@ -1775,11 +1899,11 @@ Returns
 -------
 Tree or InsertpResult
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `interpd_tree(tree: 'Tree', node1: 'int', node2: 'int') -> 'Tree'`
 
@@ -1796,10 +1920,10 @@ Reconnect the subtrees rooted at ``ichilds`` to new parents ``ipars``.
 If ``shift`` (default), each subtree is translated so its root lands on
 its new parent's position.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``ichilds``, ``ipars`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``ichilds``, ``ipars`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `repair_tree(tree: 'Tree', no_root_trifurcation: 'bool' = False) -> 'Tree'`
 
@@ -1808,11 +1932,11 @@ drop zero-length segments, and sort into canonical (level-order) index
 order. Most other functions in this toolbox assume their input has
 already been through this.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `resample_tree(tree: 'Tree', sr: 'float' = 10.0, method: 'str' = 'matlab', *, extend_terminals: 'bool' = True, interp_diameter: 'bool' = False, conserve_length: 'bool' = False, collapse_branches: 'bool' = True, preserve_branch_spacing: 'bool' = False, trim_regions: 'bool' = True) -> 'Tree'`
 
@@ -1881,9 +2005,9 @@ quietly incomparable.
 
 A single-node tree has nothing to resample and is returned unchanged.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `restrain_tree(tree: 'Tree', maxpl: 'float' = 400.0, interpolate: 'bool' = True) -> 'Tree'`
 
@@ -1892,22 +2016,22 @@ root. If ``interpolate`` (default), terminal points beyond ``maxpl``
 are pulled back to exactly ``maxpl`` along their original direction
 rather than simply deleted.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `root_tree(tree: 'Tree') -> 'Tree'`
 
 Prepend a near-zero-length segment at the root (some downstream
 algorithms rely on the root having exactly one child).
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `rootangle_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1920,12 +2044,12 @@ the tree happens to already be centered there; this port's explicit
 `tran_tree` call makes the "line to root" in the docstring correct
 regardless of the tree's absolute position.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -2041,6 +2165,13 @@ as MATLAB does: any intermediate state is a prefix of the log, so
 storing whole trees per step would be quadratic in memory for
 information already present.
 
+**Verified against MATLAB R2026a** (2026-09-08) on four fixed clouds --
+150 points in 2-D, 200 in 3-D, 300 shared between three seeds, and one
+with ``mplen`` binding. Every edge matches: same tree sizes, same
+parent for every point, same total cable length to 0.1 um. The
+turn-taking in the growth loop is what the multi-tree case needs for
+that; see the comment on ``best_cost`` below.
+
 ### `allBCTs_tree(n: 'int' = 8, with_trees: 'bool' = False)`
 
 All non-isomorphic B/C/T topologies with ``n`` nodes.
@@ -2090,11 +2221,11 @@ dataset, which makes it a dataset-specific generator rather than part of
 a capping algorithm, and folding it into this function makes it easy to
 apply by accident.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `clean_tree(tree: 'Tree', radius: 'float' = 1.0) -> 'Tree'`
 
@@ -2105,11 +2236,11 @@ reconstruction/generation artifact), or whose total length is under
 per call -- run repeatedly for further cleanup, as the MATLAB
 docstring also recommends.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `growth_tree(span, start=None, thr: 'float' = 100, bf: 'float' = 0.5, sp: 'float' = 0.5, k: 'float' = 0.0, *, alpha: 'float' = 0.5, jitter=(), max_radius: 'float' = 10000.0, n_target_points: 'int' = 100000, stop: 'str' = 'steps', history: 'bool' = False, rng=None) -> 'Growth'`
 
@@ -2216,11 +2347,11 @@ not MATLAB's value of 2 (an artifact of detecting self-reachability
 via "walk of length k" parity on a matrix power rather than shortest
 path) -- a deliberate correctness fix, see PORT_STATUS.md.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `quaddiameter_tree(tree: 'Tree', scale: 'float' = 0.5, offset: 'float' = 0.5) -> 'Tree'`
 
@@ -2229,20 +2360,20 @@ every root-to-terminal path, using the bundled best-fit parameters for
 optimal current transfer; nodes shared by multiple paths get the mean
 of each path's diameter at that point.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `quadfit_tree(tree: 'Tree')`
 
 Fit a quadratic diameter taper (:func:`quaddiameter_tree`) to
 ``tree``'s existing diameters. Returns ``(scale, offset, fitted_tree)``.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `random_tree(n: 'int' = 100, radius: 'float' = 100.0, bf: 'float' = 0.5, anisotropy: 'float' = 1.0, *, dim: 'int' = 3, shape: 'str' = 'sphere', avoid_multifurcations: 'bool' = False, rng=None) -> 'Tree'`
 
@@ -2298,11 +2429,11 @@ child subtree carries more than ``pwchild`` of the descendant weight)
 into longer paths, so smoothing happens along natural long branches
 rather than independently on every short inter-branch-point segment.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `soma_tree(tree: 'Tree', maxD: 'float' = 30.0, length: 'float | None' = None, tag_region: 'bool' = False, overlap_correction: 'bool' = False) -> 'Tree'`
 
@@ -2338,11 +2469,11 @@ Returns
 -------
 Tree
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -2522,11 +2653,11 @@ the same distance, and comes first, it is chosen instead. Here the
 partner is taken from the masked set directly, which is what the line
 was evidently meant to do.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `gscale_tree(trees: 'Tree | list[Tree]') -> 'Spanning'`
 
@@ -2702,11 +2833,11 @@ dendrite or inside it. Here the *direction* is flipped rather than the
 length, which is distributionally identical (the direction is uniformly
 random to begin with) and keeps the head beyond the neck.
 
-    An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
+An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -2829,12 +2960,12 @@ it wraps the *arbor* at a stated distance rather than wrapping its
 *points* by a unitless tightness knob, so the result means something
 physical.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `convexity_tree(tree: 'Tree', thr: 'float' = 25.0, nodes=None, samples: 'int' = 24, max_pairs: 'int' = 20000, dim: 'int' = 3, rng=None) -> 'float'`
 
@@ -2899,12 +3030,12 @@ This version tests against the **space-filling hull** instead, which is
 the standard definition of convexity for a shape and the only version
 that can distinguish a compact arbor from a lobed one.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `gdens_tree(tree, sr: 'float' = 5.0, nodes=None) -> 'DensityGrid'`
 
@@ -2941,9 +3072,9 @@ image convention; that transposition is deliberate here, since every
 other array in this port is ``[x, y, z]`` and mixing the two silently
 is exactly how axis bugs happen.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `hull_tree(tree: 'Tree', thr: 'float' = 25.0, bx=50, by=50, bz=50, dim: 'int | None' = None, *, return_distances: 'bool' = False) -> 'HullResult'`
 
@@ -2990,12 +3121,12 @@ resolution deliberately rather than by default.
 If the isosurface comes out empty, `thr` is likely smaller than the
 grid spacing, so no cell straddles the level -- the warning says so.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `lego_tree(tree: 'Tree', sr: 'float' = 5.0, nodes=None, ax=None, cmap: 'str' = 'viridis', threshold: 'float' = 0.0)`
 
@@ -3024,12 +3155,12 @@ does this cell reach", :func:`hull_tree` is the better tool -- but a
 lego plot makes *density* differences legible in a way a smooth hull
 cannot, which is why the original has both.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `share_boundary_tree(tree1: 'Tree', tree2: 'Tree', thr: 'float' = 25.0, sr: 'float' = 5.0) -> 'float'`
 
@@ -3105,12 +3236,12 @@ MATLAB's octagon would be inventing a number rather than measuring one.
 Everything else in this function was checked against MATLAB's own code
 running on the exact disk, and agrees pixel for pixel.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `theta_mc_tree(tree: 'Tree', n: 'int' = 100000, alpha: 'float' = 0.5, *, dim: 'int | None' = None, rng=None) -> 'ThetaMC'`
 
@@ -3174,12 +3305,12 @@ segment as elsewhere in this module. Measured both ways the answers
 differ by under 0.5% on the bundled trees, far below the boundary
 effect above, so the extra machinery would buy nothing here.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `theta_tree(tree: 'Tree', radius: 'int | None' = None, *, include_boundary: 'bool' = True) -> 'float'`
 
@@ -3218,12 +3349,12 @@ as well as a perfect packing.
 radius it stands for, and it then compares that index against real
 distances in the ``'-s'`` plot. Recorded in ``MATLAB_TOOLBOX_BUGS.md``.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `vhull_tree(tree: 'Tree', nodes=None, boundary=None, thr: 'float' = 25.0, dim: 'int | None' = None) -> 'VoronoiResult'`
 
@@ -3258,12 +3389,12 @@ MATLAB's version silently drops them, which quietly biases any mean
 computed over the result -- the outermost nodes are exactly the ones
 with the largest territories.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -3305,13 +3436,13 @@ Bars nest rather than overlap: a branch is born on its parent branch,
 so its birth always falls inside its parent's ``[birth, death]``. That
 is what :func:`realisations_tree` counts.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `persistenceimage_tree(tree: 'Tree', v: 'np.ndarray | None' = None, *, mode: 'str' = 'length', sigma: 'float' = 17.5, size: 'int | None' = None, accumulate: 'bool' = True) -> 'np.ndarray'`
 
@@ -3367,10 +3498,10 @@ pixel is invisible, and it cancels between cells anyway, so this
 changes no clustering; it only matters if you read coordinates off the
 image.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape. ``v`` may be given
-    once for the whole group or as one value per tree -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `realisations_tree(tree: 'Tree | np.ndarray', v: 'np.ndarray | None' = None, *, mode: 'str' = 'length') -> 'int'`
 
@@ -3436,12 +3567,12 @@ confirmed bug (see MATLAB_TOOLBOX_BUGS.md), not reproduced here. Also
 dropped: MATLAB's ``Vrest`` parameter, defaulted onto the tree but never
 actually referenced by the dynamics -- another confirmed dead parameter.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `LIF_tree(tree: 'Tree', time: 'np.ndarray | None' = None, ge: 'np.ndarray | None' = None, gi: 'np.ndarray | None' = None, Ee: 'float' = 60.0, Ei: 'float' = -20.0, I: 'np.ndarray | None' = None, iroot: 'int' = 0, thr: 'float' = 10.0, vreset: 'float' = 0.0, Aspike: 'float' = 75.0, partial_reset: 'bool' = False, verbose: 'bool' = False) -> 'tuple[np.ndarray, np.ndarray]'`
 
@@ -3470,12 +3601,12 @@ parsed are ``'-t'``/``'-e'`` -- replaced here with explicit,
 correctly-named ``partial_reset``/``verbose`` keywords (Design
 Decision 1).
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `M_atten_tree(tree: 'Tree', thr: 'float' = 0.13995) -> 'int'`
 
@@ -3516,12 +3647,12 @@ from reading what the code does. The one behavioural difference is that
 the stray ``clf`` is not reproduced: a metrics function should not wipe
 the caller's current figure.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `M_tree(tree: 'Tree') -> 'sparse.csr_matrix'`
 
@@ -3532,12 +3663,12 @@ sparse NxN matrix, the basis for :func:`sse_tree`, :func:`syn_tree` and
 every other function in this module. Requires ``tree.Ri`` and
 ``tree.Gm``.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `cgin_tree(tree: 'Tree') -> 'float'`
 
@@ -3546,12 +3677,12 @@ Collapsed (point-neuron) input conductance of the whole tree [S].
 Requires ``tree.Gm``, taken as a single scalar specific membrane
 conductance representative of the whole cell.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `elen_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -3616,12 +3747,12 @@ diagonal is each node's local input resistance). A scalar ``I`` injects
 1 nA at that 0-based node index (returning one column); an explicit
 per-node array injects those exact currents.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `ssecat_tree(trees: 'list[Tree]', inodes1: 'int | np.ndarray', inodes2: 'int | np.ndarray', gelsyn: 'float | np.ndarray' = 1.0, I: 'float | np.ndarray | None' = None) -> 'np.ndarray'`
 
@@ -3643,12 +3774,12 @@ canonical unit conductance at that 0-based node index, matching
 :func:`sse_tree`'s ``I`` convention); ``Ee``/``Ei`` their reversal
 potentials [mV]; ``I`` an additional current injection [nA].
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `syncat_tree(trees: 'list[Tree]', inodes1: 'int | np.ndarray', inodes2: 'int | np.ndarray', gelsyn: 'float | np.ndarray' = 1.0, ge: 'float | np.ndarray | None' = None, gi: 'float | np.ndarray | None' = None, Ee: 'float' = 60.0, Ei: 'float' = -20.0, I: 'float | np.ndarray | None' = None) -> 'np.ndarray'`
 
@@ -3819,12 +3950,12 @@ fact that no segment has a root angle of exactly zero) while the 3D
 branch does not, even though the ``Estscale`` helper both branches call
 *does*. Reproduced as-is; see MATLAB_TOOLBOX_BUGS.md.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `peters_tree(tree1: 'Tree', tree2: 'Tree', spinedis: 'float' = 3.0, synapsedis: 'float' = 3.0, resample: 'bool' = True) -> 'np.ndarray'`
 
@@ -3914,12 +4045,12 @@ A third, smaller one: MATLAB's ``bootci`` defaults to bias-corrected
 accelerated intervals; this uses the percentile bootstrap, so intervals
 will differ slightly on skewed samples.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `sholl_tree(tree: 'Tree | list[Tree]', dd: 'float | np.ndarray' = 50.0, single_only: 'bool' = False, warn_double: 'bool' = True) -> 'ShollResult | list[ShollResult]'`
 
@@ -3945,8 +4076,8 @@ instead would mean choosing between sum, mean and per-cell
 normalisation, and that choice changes what the answer means, so it
 stays with the caller.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
 ### `stats_tree(trees: 'Tree | list[Tree] | list[list[Tree]]', group_names: 'list[str] | None' = None, extras: 'bool' = False, density_thr: 'float' = 25.0) -> 'dict[str, pd.DataFrame]'`
 
@@ -4045,21 +4176,21 @@ which measures the enclosed *area*.
 
 If ``plotter`` is given (3D only), the hull surface is added to it.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `dA_tree(tree: 'Tree', ax=None)`
 
 Display a tree's adjacency matrix as a sparsity image (matplotlib
 `spy`) -- a quick structural/debugging view, not anatomy.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `dendrogram_tree(tree: 'Tree', yvec=None, ax=None, color='black', linewidth: 'float' = 1.0)`
 
@@ -4070,12 +4201,12 @@ convention. Rendered with matplotlib -- an abstract topological
 diagram, not spatial anatomy, so PyVista's 3D machinery isn't the
 right tool here.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `plot_mpl_tree(tree: 'Tree', ax=None, color='black', scalars=None, cmap: 'str' = 'viridis', linewidth: 'float' = 1.0, nodes=None)`
 
@@ -4085,12 +4216,12 @@ acceleration -- see this module's docstring for why `plot_tree`
 Fixes matplotlib's well-known default 3D aspect-ratio distortion via
 `set_box_aspect`, so anatomy isn't visually stretched. Returns the Axes.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `plot_tree(tree: 'Tree', color=None, offset=(0.0, 0.0, 0.0), nodes=None, res: 'int' = 8, *, mode: 'str' = 'tube', cmap: 'str' = 'viridis', categories: 'bool' = False, scalars=None, plotter=None, show: 'bool' = False, screenshot: 'str | None' = None, **mesh_kwargs)`
 
@@ -4195,9 +4326,9 @@ Returns
 -------
 Axes, or (Axes, indices)
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `pointer_tree(plotter, tree: 'Tree', nodes, style: 'str' = 'marker', color='red', size: 'float' = 8.0, offset=(0.0, 0.0, 0.0))`
 
@@ -4252,12 +4383,12 @@ average of its leaves' positions" algorithm, and avoids an O(n^2)
 blowup from testing "is this terminal a descendant of that node" for
 every (node, terminal) pair.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `xplore_tree(tree: 'Tree', mode: 'str' = 'nodes', color='black', offset=(0.0, 0.0, 0.0), fig=None)`
 
@@ -4296,12 +4427,12 @@ matplotlib's 3D quiver draws one cone per arrow and is unusable past a
 few hundred segments. The node indices already carry the direction,
 since they increase away from the root in a sorted tree.
 
-    An **empty tree** gives an empty result rather than an error -- see
-    :mod:`pynetrees._empty`.
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ---
 
@@ -4397,9 +4528,9 @@ changing it would silently move numbers people have published.
 
 See MATLAB_TOOLBOX_BUGS.md.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `load_folder(path: 'str | Path', voxel=(1.0, 1.0, 1.0), origin=(0.0, 0.0, 0.0), pattern: 'str' = '*') -> 'Stack'`
 
@@ -4535,21 +4666,54 @@ compartment (e.g. a soma you want to give its own active
 conductances via :func:`insert_mechanism`) should be modeled with more
 than one node in that region, which is normal practice anyway.
 
-    Accepts a **list of trees** (or a list of lists of trees) as well as a
-    single one, returning results in the same shape -- see
-    :mod:`pynetrees._population`.
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
-### `insert_mechanism(model: 'NeuronModel', mechanism: 'str', region: 'str | None' = None, **params)`
+### `insert_mechanism(model: 'NeuronModel', mechanism: 'str', region: 'str | list[str] | None' = None, *, nodes=None, origin: 'int | None' = None, **params)`
 
-Insert a NEURON mechanism (e.g. ``"hh"``) on the model's sections.
+Insert a NEURON mechanism (e.g. ``"hh"``) on part of the model.
 
-``region=None`` (default) applies to every section; otherwise only
-sections belonging to that tree region name (see
-:attr:`NeuronModel.region_sections`). Keyword arguments are set as
-``seg.<mechanism>.<param> = value`` on every segment of every affected
-section (a uniform value across the section -- for a spatially-varying
-parameter, insert first and then set values directly on
-``model.node_section``/``model.node_x`` locations yourself).
+Parameters
+----------
+model : NeuronModel
+mechanism : str
+    The mechanism to ``insert``, e.g. ``"hh"``, ``"pas"``, ``"Kv42"``.
+region : str or list of str, optional
+    Tree region name(s) whose sections to act on (see
+    :attr:`NeuronModel.region_sections`).
+nodes : array_like of int, optional
+    Tree node indices instead of -- or together with -- ``region``.
+    The sections those nodes live on are used, so this is how you give
+    two parts of the *same* region different channel densities without
+    having to split the region in the morphology first.
+
+    Given both, the two are intersected. Given neither, every section
+    is affected.
+origin : int, optional
+    Node the distances passed to a callable parameter are measured
+    from. Defaults to the tree's root.
+**params
+    Parameter values, each either
+
+    * a **scalar**, set uniformly on every affected segment, or
+    * a **callable** ``f(x)`` evaluated per segment, where ``x`` is the
+      path distance [um] from ``origin`` to that segment. This is how a
+      density gradient is expressed::
+
+          insert_mechanism(model, "hh", region="adendOML",
+                           gnabar=lambda x: 0.12 * np.exp(-x / 200.0))
+
+      NEURON measures ``x`` along the cable with ``h.distance``, so it
+      is the real electrotonic path, not a straight-line distance.
+
+Notes
+-----
+A parameter NEURON exposes on the *mechanism* rather than the segment (a
+``GLOBAL`` in the ``.mod`` file) cannot vary along the cell, and setting
+one per segment would silently apply the last value everywhere. Those
+raise instead, naming the parameter -- use ``h.<param>_<mechanism>`` to
+set it once, deliberately.
 
 ### `run_current_clamp(model: 'NeuronModel', at_node: 'int', amp: 'float', delay: 'float', dur: 'float', tstop: 'float', record_nodes: 'list[int] | None' = None, v_init: 'float' = -70.0) -> 'tuple[np.ndarray, dict[int, np.ndarray]]'`
 
@@ -4560,6 +4724,235 @@ was built from. ``amp`` [nA],
 ``delay``/``dur``/``tstop`` [ms]. Returns ``(t, v)`` where ``t`` is the
 time axis [ms] and ``v`` maps each recorded node to its voltage trace
 [mV] (``record_nodes`` defaults to ``[at_node]``).
+
+---
+
+## Optional dependencies
+
+Reporting what an installation cannot do, up front.
+
+### `missing_dependencies() -> 'dict[str, tuple[str, list[str], str]]'`
+
+What this installation cannot do, and what would fix it.
+
+Returns
+-------
+dict
+    ``{feature: (extra, missing_modules, what_stops_working)}`` for every
+    feature with at least one missing module. Empty on a full install.
+
+Examples
+--------
+>>> for feature, (extra, modules, effect) in missing_dependencies().items():
+...     print(f"{feature}: pip install pynetrees[{extra}]  ({effect})")
+
+---
+
+## Granule-cell model
+
+The Beining et al. (2017) granule cell: `GC_initModel.m` as one adjustable function. Resolving a specification needs nothing but Python; building a model from it needs the `neuron` package and the model's compiled `.mod` library.
+
+### `GCModel`
+
+A granule cell built into NEURON, plus the spec that produced it.
+
+Attributes
+----------
+model : NeuronModel
+    The sections themselves -- ``loc(node)``, ``sections``,
+    ``region_sections`` and everything else
+    :mod:`pynetrees.neuron_bridge` provides. Attribute access falls
+    through to it, so ``gc.loc(node)`` works directly.
+spec : GCSpec
+    The resolved specification, so a finished model can still say what
+    it was built from.
+skipped : list[tuple[str, str, str]]
+    ``(region, mechanism, parameter)`` for everything the compiled
+    mechanism library would not accept. Empty is what you want; entries
+    here almost always mean the ``.mod`` files were compiled from a
+    different version of the model than the spec came from.
+
+### `GCSpec`
+
+A granule-cell biophysics specification: what goes where, and how much.
+
+Attributes
+----------
+regions : dict
+    ``{region_name: {mechanism: {parameter: value}}}``, mirroring
+    ``neuron.mech{t}`` in T2N. The pseudo-region ``"all"`` applies to
+    every section and is overridden by a named region.
+celsius : float
+    Simulation temperature [degC]. ``GC_initModel.m`` uses 24.
+v_init : float
+    Initial membrane potential [mV].
+name : str
+    Label carried through to the built model, for reporting.
+
+Notes
+-----
+Frozen on purpose: every adjustment returns a new spec, so a variant
+derived from another cannot quietly change the one it came from. Use
+:meth:`scaled`, :meth:`overridden` and :meth:`without` to derive.
+
+### `GC_init(tree: 'Tree', mech=None, *, cut_axon: 'bool' = False, mech_library=None, freq: 'float' = 100.0, d_lambda: 'float' = 0.1, strict: 'bool' = False, **spec_options) -> 'GCModel'`
+
+Build a granule cell into NEURON from a morphology and a spec.
+
+The Python counterpart of ``GC_initModel.m``, minus its morphology
+catalogue: pass the tree you want, since :func:`~pynetrees.load_tree`
+already reads every ``.mtr`` that function hard-codes a path for.
+
+Parameters
+----------
+tree : Tree or list[Tree]
+    The morphology. Its region names have to match the spec's --
+    ``soma``, ``GCL``, ``adendIML``/``adendMML``/``adendOML``, ``axon``,
+    ``axonh`` for the published model. A list of trees gives a list of
+    models, nested to whatever depth was passed in.
+mech : str, Path, dict or GCSpec, optional
+    The biophysics, in any form :func:`gc_spec` takes. Defaults to
+    :data:`GC_BIOPHYS`, so ``GC_init(tree)`` builds the published model
+    and the argument is there for when you want a different one.
+cut_axon : bool, default False
+    Delete the ``axon`` region first, keeping the hillock ``axonh`` --
+    ``ostruct.cut``, and what the dendritic-democracy scripts do.
+mech_library : str or Path, optional
+    Compiled mechanism library to load: ``nrnmech.dll`` on Windows, the
+    ``x86_64``/``arm64`` directory elsewhere. Without it NEURON knows
+    only its built-in mechanisms and every granule-cell channel lands in
+    :attr:`GCModel.skipped`.
+freq, d_lambda : float
+    Passed to :func:`~pynetrees.build_neuron_model` for the segment count.
+strict : bool, default False
+    Raise if any parameter could not be applied, rather than collecting
+    it in :attr:`GCModel.skipped`. Worth turning on in a test; off by
+    default because a partly-compiled library is a normal state to be
+    exploring in.
+**spec_options
+    Forwarded to :func:`gc_spec` (``passive_only``, ``scale``,
+    ``override``, ``spine_scale``, ...), so the common case stays one
+    call::
+
+        gc = GC_init(tree)                        # the published model
+        gc = GC_init(tree, passive_only=True)     # its passive variant
+        gc = GC_init(tree, "my_dump.json")        # something else entirely
+
+Returns
+-------
+GCModel
+
+Notes
+-----
+Passive parameters are folded into ``tree.Ri``/``Gm``/``Cm`` **before**
+the sections are built, because NEURON's d-lambda rule reads ``Ra`` and
+``cm`` to choose ``nseg``. Setting them afterwards -- the tempting
+order, since everything else is set on finished sections -- leaves the
+compartment count computed from the wrong cable.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
+
+### `gc_mod_path() -> 'Path'`
+
+Directory holding the granule-cell model's ``.mod`` sources.
+
+The 44 NEURON mechanism files the published model is built from, bundled
+because :data:`GC_BIOPHYS` names channels that no NEURON installation has
+-- ``na8st``, ``Kir21``, ``Kv42``, ``BK`` and the rest are specific to
+this model, and without them :func:`GC_init` can only report them all as
+:attr:`GCModel.skipped`.
+
+They are **sources, not a library**: NEURON loads compiled mechanisms, so
+build them once and pass the result as ``mech_library=``::
+
+    import subprocess, pynetrees as pt
+
+    # Linux / macOS -- writes ./x86_64 (or ./arm64)
+    subprocess.run(["nrnivmodl", str(pt.gc_mod_path())], check=True)
+    gc = pt.GC_init(pt.gc_tree(), mech_library="x86_64")
+
+On Windows the equivalent is ``mknrndll`` (a GUI shipped with NEURON;
+point it at this directory), which writes ``nrnmech.dll`` beside the
+``.mod`` files.
+
+The compiled products are deliberately **not** bundled: they are ~23 MB
+and valid only for the exact NEURON version and architecture they were
+built against, so shipping one would be shipping something that silently
+refuses to load for most people.
+
+Returns
+-------
+Path
+    The directory. Passing it to ``nrnivmodl`` compiles every file in it.
+
+Notes
+-----
+The returned path is only guaranteed to exist for the duration of the
+call when the package is installed as a zip; copy the files out if you
+need it to persist. A normal ``pip install`` or editable install gives a
+real directory on disk.
+
+### `gc_spec(source=None, *, passive_only: 'bool' = False, spine_scale: 'float | None' = None, spine_scale_applied: 'bool' = True, spine_density=None, scale=None, override=None, celsius: 'float' = 24.0, v_init: 'float' = -80.0, name: 'str | None' = None) -> 'GCSpec'`
+
+Resolve a granule-cell biophysics specification.
+
+Pure: touches no simulator, so a variant can be built, diffed and
+asserted on in a test with NEURON absent. :func:`GC_init` is what turns
+one into a running model.
+
+Parameters
+----------
+source : str or Path or dict or GCSpec, optional
+    Where the table comes from. Defaults to :data:`GC_BIOPHYS`, the
+    published active model bundled with the package, so ``gc_spec()``
+    with no arguments is the Beining et al. (2017) granule cell. Also
+    takes a JSON file of ``neuron.mech{1}`` as dumped from MATLAB, the
+    same structure as a dict, or an existing spec to derive from.
+passive_only : bool, default False
+    Drop every active channel and ion block, leaving the passive cable --
+    ``ostruct.vmodel = 3``. Equivalent to
+    ``spec.without(*spec.channels, *spec.ion_blocks)``, offered here
+    because it is the most-used variant.
+spine_scale : float, optional
+    Fold spine membrane into ``pas.cm``/``pas.g`` region by region: each
+    is multiplied by ``1 + GC_SPINE_DENSITY[region] * spine_scale``.
+    MATLAB's ``ostruct.scalespines``, which passes ``scalespines * 0.9``
+    -- so ``spine_scale=0.9`` reproduces its default.
+spine_scale_applied : bool, default True
+    Whether ``source`` already carries spine scaling. Passing
+    ``spine_scale`` while this is ``True`` raises: scaling an
+    already-scaled spec is the mistake this argument exists to catch.
+spine_density : dict, optional
+    Per-region spine factors, defaulting to :data:`GC_SPINE_DENSITY`.
+scale : dict, optional
+    Passed to :meth:`GCSpec.scaled` -- the usual way to express a variant
+    that differs only in channel densities.
+override : dict, optional
+    Passed to :meth:`GCSpec.overridden`, applied after ``scale``.
+celsius, v_init : float
+    Simulation temperature [degC] and initial potential [mV].
+name : str, optional
+    Label for the spec; defaults to the JSON file's stem.
+
+Returns
+-------
+GCSpec
+
+---
+
+## Uncategorised
+
+Present in `pynetrees.__all__` but not assigned to a section above -- the generator's module map is missing an entry.
+
+### `GC_BIOPHYS`
+
+Value: `{'all': {'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}, 'k_ion': {'ek': -93.0}, 'na_ion': {'ena': 87.76}, 'ca_ion': {'cao0': 2.0, 'cai0': 4.8e-05}}, 'soma': {'pas': {'cm': 0.9, 'Ra': 200.0, 'g': 1.3846153846153847e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'na8st': {'vShift': 22.0, 'vShift_inact': 0.0, 'a1_0': 45.84982656184167, 'a1_1': 0.02393541665657613, 'b1_0': 0.01440952344322651, 'b1_1': 0.0884760912876942, 'a2_0': 19.80838207143563, 'a2_1': 0.02217709530008501, 'b2_0': 0.5650174488683913, 'b2_1': 0.06108403283302217, 'a3_0': 71.81189201089192, 'a3_1': 0.0659379060126194, 'b3_0': 0.7531178253431512, 'b3_1': 0.03647978133116471, 'bh_0': 2.9713, 'bh_1': 0.6443, 'bh_2': 0.0594, 'ah_0': 1.586, 'ah_1': 2306.7, 'ah_2': 0.0493, 'gbar': 0.088128}, 'Kv21': {'gkbar': 0.007090909090909091}, 'Cabuffer': {'brat': 200.0, 'tau': 240.0}, 'Cav22': {'gbar': 0.00030000000000000003, 'hTau': 80.0}, 'Cav12': {'gbar': 2e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 1.6e-05, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'BK': {'gabkbar': 0.0039, 'gakbar': 0.0156, 'diff': 1.5, 'base': 4.0}, 'SK2': {'gkbar': 8.333333333333333e-07, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}}, 'GCL': {'pas': {'cm': 0.9, 'Ra': 200.0, 'g': 1.3846153846153847e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 0.0, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.002175, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05}, 'Cav12': {'gbar': 1e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 4e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 1.6666666666666667e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'SGCL': {'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 1e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 4e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 8.333333333333333e-07, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'adendIML': {'pas': {'cm': 1.305, 'Ra': 200.0, 'g': 2.0076923076923077e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 4e-06, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.00435, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 4e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 4.375e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'adendMML': {'pas': {'cm': 1.71, 'Ra': 200.0, 'g': 2.6307692307692308e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 4e-06, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.00435, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 4e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 4.375e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'adendOML': {'pas': {'cm': 1.71, 'Ra': 200.0, 'g': 2.6307692307692308e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 4e-06, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.00435, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 4e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 4.375e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'axonh': {'pas': {'cm': 0.9, 'Ra': 200.0, 'g': 6.5934065934065935e-06, 'e': -80.0}, 'Kir21': {'gkbar': 6.741000000000001e-05, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'na8st': {'vShift': 22.0, 'vShift_inact': 0.0, 'a1_0': 62.64774039489168, 'a1_1': 0.01160554780103536, 'b1_0': 0.001936911472259165, 'b1_1': 0.1377185203515948, 'a2_0': 34.78282276988217, 'a2_1': 0.02995594783341219, 'b2_0': 0.09575149443481501, 'b2_1': 0.09281138012170398, 'a3_0': 76.69829640279345, 'a3_1': 0.05374324331056838, 'b3_0': 1.248791525464647, 'b3_1': 0.03115037791363419, 'bh_0': 2.9807, 'bh_1': 0.4679, 'bh_2': 0.0596, 'ah_0': 0.3962, 'ah_1': 2982.1, 'ah_2': 0.0635, 'gbar': 0.5184}, 'Kv11': {'gkbar': 0.00025, 'vshift': 0.0}, 'Kv14': {'gkbar': 0.001, 'vshift': 0.0}, 'Kv34': {'gkbar': 0.03078125, 'scale_a': 4.0, 'ksl': 0.5}, 'Kv723': {'gkbar': 0.0067, 'Dtaumult1': 6.0, 'Dtaumult2': 6.0, 'tau0mult': 0.2}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 1e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 8.000000000000001e-06}, 'BK': {'gabkbar': 0.0156, 'gakbar': 0.0624, 'diff': 100000.0, 'base': 4.0}, 'SK2': {'gkbar': 8.333333333333333e-05, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}, 'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}}, 'axon': {'pas': {'cm': 0.9, 'Ra': 100.0, 'g': 6.5934065934065935e-06, 'e': -80.0}, 'Kir21': {'gkbar': 6.741000000000001e-05, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'na8st': {'vShift': 22.0, 'vShift_inact': 0.0, 'a1_0': 62.64774039489168, 'a1_1': 0.01160554780103536, 'b1_0': 0.001936911472259165, 'b1_1': 0.1377185203515948, 'a2_0': 34.78282276988217, 'a2_1': 0.02995594783341219, 'b2_0': 0.09575149443481501, 'b2_1': 0.09281138012170398, 'a3_0': 76.69829640279345, 'a3_1': 0.05374324331056838, 'b3_0': 1.248791525464647, 'b3_1': 0.03115037791363419, 'bh_0': 2.9807, 'bh_1': 0.4679, 'bh_2': 0.0596, 'ah_0': 0.3962, 'ah_1': 2982.1, 'ah_2': 0.0635, 'gbar': 0.088128}, 'Kv11': {'gkbar': 0.00025, 'vshift': 0.0}, 'Kv14': {'gkbar': 0.001, 'vshift': 0.0}, 'Kv34': {'gkbar': 0.00765625, 'scale_a': 4.0, 'ksl': 0.5}, 'Kv723': {'gkbar': 0.00134, 'Dtaumult1': 6.0, 'Dtaumult2': 6.0, 'tau0mult': 0.2}, 'Cabuffer': {'brat': 10.0, 'tau': 43.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav13': {'gbar': 4e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 8.000000000000001e-06}, 'BK': {'gabkbar': 0.0156, 'gakbar': 0.0624, 'diff': 100000.0, 'base': 4.0}, 'SK2': {'gkbar': 1.25e-05, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}}, 'spinesneck': {'pas': {'cm': 0.9, 'Ra': 200.0, 'g': 1.3846153846153847e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 4e-06, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.00435, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 4e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 4.375e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}}, 'spineshead': {'pas': {'cm': 0.9, 'Ra': 200.0, 'g': 1.3846153846153847e-05, 'e': -80.0}, 'Kir21': {'gkbar': 0.000141561, 'mg_i': 4.0, 'spm_i': 1.0, 'gsub': 0.25, 'fac': 0.005, 'vshiftbs': 0.0, 'vshiftbb': 0.0, 'b': 0.105, 'shiftmg': 0.5, 'cas': 0.14285714285714285, 'As': 0.2}, 'HCN': {'cAMP': 0.0, 'e': -41.9, 'gbar': 4e-06, 'vhalfl': -100.0, 'kl': 8.0, 'vhalft': 30.4, 'at': 0.00052, 'bt': 0.2151}, 'Kv42': {'gkbar': 0.00435, 'a0': 0.416, 'za': 1.1, 'b0': 0.0486, 'zb': -1.556, 'kco0': 0.347, 'zco': 0.0, 'koc0': 1.67, 'zoc': 0.0, 'kci': 0.04873, 'kic': 0.000537, 'koi': 0.0669, 'kio': 0.04246, 'vshift': -20.0}, 'Cav22': {'gbar': 5e-05, 'hTau': 80.0}, 'Cav12': {'gbar': 4e-05, 'kf': 0.0005, 'VDI': 1.0}, 'Cav13': {'gbar': 8e-06, 'kf': 0.0005, 'VDI': 0.85}, 'Cav32': {'gbar': 2.2e-05}, 'SK2': {'gkbar': 4.375e-06, 'diff': 3.0, 'Q10': 5.0, 'fac': 2.5, 'diro2': 0.1, 'invc3': 0.09, 'invc1': 0.32, 'invc2': 0.32, 'dirc4': 320.0}}}`
+
+### `GC_SPINE_DENSITY`
+
+Value: `{'soma': 0.0, 'axon': 0.0, 'axonh': 0.0, 'GCL': 0.0, 'SGCL': 0.0, 'adendIML': 0.5, 'adendMML': 1.0, 'adendOML': 1.0}`
 
 ---
 

@@ -18,6 +18,7 @@ that snapping rule "arbitrary", not a mathematical necessity).
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import NamedTuple
 
 import numpy as np
@@ -76,13 +77,11 @@ def delete_tree(tree: Tree, inodes, keep_regions: bool = False) -> Tree | list[T
         # `pynetrees._empty`), and refusing here would make "filter a
         # population down to the cells matching X" fail on the one cell
         # where nothing matches.
-        return Tree(
-            dA=sparse.csr_matrix((0, 0)),
-            X=np.empty(0), Y=np.empty(0), Z=np.empty(0), D=np.empty(0),
-            R=np.empty(0, dtype=int),
+        # reindexing onto no nodes at all empties the per-node fields while
+        # keeping the whole-cell ones (name, frustum, scalar Ri/Gm/Cm, and
+        # whatever in `meta` is not per-node)
+        return tree.reindexed(np.empty(0, dtype=int)).copy(
             rnames=[] if not keep_regions else list(tree.rnames),
-            name=tree.name, frustum=tree.frustum,
-            Ri=tree.Ri, Gm=tree.Gm, Cm=tree.Cm,
         )
 
     ipar = ipar_tree(tree)
@@ -116,17 +115,11 @@ def delete_tree(tree: Tree, inodes, keep_regions: bool = False) -> Tree | list[T
         uniq, R = np.unique(R, return_inverse=True)
         rnames = [tree.rnames[i] for i in uniq]
 
-    result = Tree(
-        dA=dA,
-        X=tree.X[keep_idx],
-        Y=tree.Y[keep_idx],
-        Z=tree.Z[keep_idx],
-        D=tree.D[keep_idx],
-        R=R,
-        rnames=rnames,
-        name=tree.name,
-        frustum=tree.frustum,
-    )
+    # `reindexed` carries the per-node fields (Ri/Gm/Cm and any per-node
+    # `meta`) through the subset; dA is then replaced by the rewired one
+    # built above, which reattaches orphans to their surviving ancestor
+    # rather than merely dropping their edges.
+    result = tree.reindexed(keep_idx).copy(dA=dA, R=R, rnames=rnames)
 
     roots = np.flatnonzero(np.asarray(dA.sum(axis=1)).ravel() == 0)
     if len(roots) <= 1:
@@ -198,6 +191,10 @@ def elimt_tree(tree: Tree, at_root: bool = True) -> Tree:
     X, Y, Z, D, R = (
         tree.X.tolist(), tree.Y.tolist(), tree.Z.tolist(), tree.D.tolist(), tree.R.tolist(),
     )
+    # which old node each node of the result derives from: the originals map
+    # to themselves, and every spacer to the branch point it was split off
+    # from, so per-node fields (Ri/Gm/Cm, per-node `meta`) follow the split
+    source = list(range(N))
     n = N
 
     for bp in multif.tolist():
@@ -225,6 +222,7 @@ def elimt_tree(tree: Tree, at_root: bool = True) -> Tree:
             Z.append(tree.Z[bp] + 0.0001 * dZ * (i + 1))
             D.append(D[bp])
             R.append(R[bp])
+            source.append(bp)
             edges.append((children[i], prev))
             edges.append((spacer, prev))
             prev = spacer
@@ -234,11 +232,10 @@ def elimt_tree(tree: Tree, at_root: bool = True) -> Tree:
     rows = [c for c, _ in edges]
     cols = [p for _, p in edges]
     dA_new = sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n)).tocsr()
-    new_tree = Tree(
-        dA=dA_new, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
-        R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
+    return tree.reindexed(source).copy(
+        dA=dA_new, X=np.array(X), Y=np.array(Y), Z=np.array(Z),
+        D=np.array(D), R=np.array(R),
     )
-    return new_tree
 
 
 @accepts_population
@@ -256,10 +253,7 @@ def repair_tree(tree: Tree, no_root_trifurcation: bool = False) -> Tree:
     if tree.n_nodes > 1 and T_tree(tree)[0]:
         dA = tree.dA.tolil()
         dA[1, 0] = 1
-        tree = Tree(
-            dA=dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D, R=tree.R,
-            rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
-        )
+        tree = tree.copy(dA=dA)
 
     tree = sort_tree(tree, by="lo")
     return tree
@@ -283,16 +277,17 @@ def root_tree(tree: Tree) -> Tree:
     def prepend(v, first_delta=0.0):
         return np.concatenate([[v[0] + first_delta], v])
 
-    return Tree(
+    # the new node 0 is a copy of the old root displaced by a hair, so it
+    # inherits the old root's per-node fields -- `reindexed` does that, and
+    # the coordinates it would carry are replaced below with the shifted ones
+    source = np.concatenate([[0], np.arange(N)])
+    return tree.reindexed(source).copy(
         dA=dA.tocsr(),
         X=prepend(tree.X, -0.0001),
         Y=prepend(tree.Y),
         Z=prepend(tree.Z),
         D=prepend(tree.D),
         R=prepend(tree.R),
-        rnames=tree.rnames,
-        name=tree.name,
-        frustum=tree.frustum,
     )
 
 
@@ -393,16 +388,19 @@ def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None, *, full_output: bool = F
         (np.ones(len(rows)), (rows, cols)), shape=(N + n_new, N + n_new)
     ).tocsr()
 
-    new_tree = Tree(
+    # a new node inherits its per-node fields from the node it attaches to;
+    # `parent` may itself be one of the new nodes, so walk back to a node
+    # that existed before, which is where the values have to come from
+    source = np.arange(N + n_new)
+    for new_index, up in zip(range(N, N + n_new), np.asarray(parent, dtype=int)):
+        source[new_index] = source[up]
+    new_tree = tree.reindexed(source).copy(
         dA=dA,
         X=np.concatenate([tree.X, X]),
         Y=np.concatenate([tree.Y, Y]),
         Z=np.concatenate([tree.Z, Z]),
         D=np.concatenate([tree.D, D]),
         R=np.concatenate([tree.R, R]),
-        rnames=tree.rnames,
-        name=tree.name,
-        frustum=tree.frustum,
     )
     if full_output:
         return InsertResult(new_tree, np.arange(N, N + n_new))
@@ -477,6 +475,9 @@ def insertp_tree(
     # original `dA` at all.
     coo = tree.dA.tocoo()
     edges = list(zip(coo.row.tolist(), coo.col.tolist()))
+    # per-node fields follow the same rule the region does below: a point
+    # inserted into a segment belongs to that segment, which is the child's
+    source = list(range(N))
     n = N
     for pl in plens.tolist():
         pos = max(i for i in range(len(plen_path)) if plen_path[i] < pl)
@@ -494,6 +495,7 @@ def insertp_tree(
         Z.append(Z[p_node] + (Z[c_node] - Z[p_node]) * rpos)
         D.append(D[p_node] + (D[c_node] - D[p_node]) * rpos)
         R.append(R[c_node])
+        source.append(source[c_node])
         edges.remove((c_node, p_node))
         edges.append((new_node, p_node))
         edges.append((c_node, new_node))
@@ -503,9 +505,9 @@ def insertp_tree(
     rows = [c for c, _ in edges]
     cols = [p for _, p in edges]
     dA = sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n)).tocsr()
-    new_tree = Tree(
-        dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
-        R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
+    new_tree = tree.reindexed(source).copy(
+        dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z),
+        D=np.array(D), R=np.array(R),
     )
     sorted_tree, order = sort_tree(new_tree, by="lo", full_output=True)
     if full_output:
@@ -530,7 +532,7 @@ def interpd_tree(tree: Tree, node1: int, node2: int) -> Tree:
     m = (tree.D[path[-1]] - tree.D[path[0]]) / (Plen[path[-1]] - Plen[path[0]])
     D = tree.D.copy()
     D[path] = m * (Plen[path] - Plen[path[0]]) + tree.D[path[0]]
-    return tree.with_coords(D=D)
+    return tree.copy(D=D)
 
 
 @accepts_population(paired=("ichilds", "ipars",))
@@ -558,10 +560,7 @@ def recon_tree(tree: Tree, ichilds, ipars, shift: bool = True) -> Tree:
         dA[child, idpar[child]] = 0
         dA[child, parent] = 1
 
-    return Tree(
-        dA=dA.tocsr(), X=X, Y=Y, Z=Z, D=tree.D, R=tree.R,
-        rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
-    )
+    return tree.copy(dA=dA.tocsr(), X=X, Y=Y, Z=Z)
 
 
 @accepts_population
@@ -599,7 +598,7 @@ def restrain_tree(
     X[over] = X[idpar[over]] + direction[over, 0] * reach
     Y[over] = Y[idpar[over]] + direction[over, 1] * reach
     Z[over] = Z[idpar[over]] + direction[over, 2] * reach
-    return tree.with_coords(X=X, Y=Y, Z=Z)
+    return tree.copy(X=X, Y=Y, Z=Z)
 
 
 def cat_tree(
@@ -640,8 +639,68 @@ def cat_tree(
     merged = Tree(
         dA=dA.tocsr(), X=X, Y=Y, Z=Z, D=D, R=R, rnames=rnames,
         name=tree1.name, frustum=tree1.frustum,
+        meta=_cat_meta(tree1, tree2),
+        **_cat_electrical(tree1, tree2),
     )
     return sort_tree(merged, by="lo")
+
+
+def _cat_electrical(tree1: Tree, tree2: Tree) -> dict:
+    """``Ri``/``Gm``/``Cm`` for the concatenation of two trees.
+
+    Kept only where the answer is unambiguous: both trees agree on a scalar,
+    or both carry a value that can be laid end to end per node. If one tree
+    has the property and the other does not there is no defensible value for
+    the half that never had one, so the field is dropped -- loudly, since
+    silently returning ``None`` would surface much later as
+    "``build_neuron_model`` needs Ri" on a tree that visibly had it.
+    """
+    out = {}
+    for name in ("Ri", "Gm", "Cm"):
+        a, b = getattr(tree1, name), getattr(tree2, name)
+        if a is None and b is None:
+            continue
+        if a is None or b is None:
+            warnings.warn(
+                f"cat_tree: only one of the two trees sets {name}; the "
+                f"concatenated tree gets {name}=None. Set it on both (or "
+                f"neither) before concatenating.",
+                stacklevel=3,
+            )
+            continue
+        if np.isscalar(a) and np.isscalar(b):
+            if a == b:
+                out[name] = a
+            else:
+                out[name] = np.concatenate(
+                    [np.full(tree1.n_nodes, a), np.full(tree2.n_nodes, b)]
+                )
+            continue
+        out[name] = np.concatenate([
+            np.broadcast_to(np.asarray(a, dtype=float), (tree1.n_nodes,)),
+            np.broadcast_to(np.asarray(b, dtype=float), (tree2.n_nodes,)),
+        ])
+    return out
+
+
+def _cat_meta(tree1: Tree, tree2: Tree) -> dict:
+    """``meta`` for the concatenation of two trees.
+
+    Per-node entries present on both are laid end to end. Everything else
+    comes from ``tree1``, which is the tree being grown onto -- and a
+    per-node entry on only one side is dropped, since padding it would
+    invent values for the other half.
+    """
+    out = {}
+    for key, value in tree1.meta.items():
+        per_node1 = isinstance(value, np.ndarray) and value.shape[:1] == (tree1.n_nodes,)
+        if not per_node1:
+            out[key] = value
+            continue
+        other = tree2.meta.get(key)
+        if isinstance(other, np.ndarray) and other.shape[:1] == (tree2.n_nodes,):
+            out[key] = np.concatenate([value, other])
+    return out
 
 
 @accepts_population
@@ -756,6 +815,10 @@ def resample_tree(
     Z = [tree.Z[old] for old in anchors]
     D = [tree.D[old] for old in anchors]
     R = [tree.R[old] for old in anchors]
+    # a resampled point lies inside one original segment and belongs to it,
+    # so it takes that segment's per-node fields -- the same node its region
+    # comes from below
+    source = list(anchors)
 
     rows, cols = [], []
     n = len(anchors)
@@ -792,6 +855,7 @@ def resample_tree(
             Z.append(tree.Z[a] + (tree.Z[b] - tree.Z[a]) * rpos)
             D.append(tree.D[a] + (tree.D[b] - tree.D[a]) * rpos)
             R.append(tree.R[b])
+            source.append(b)
             rows.append(n)
             cols.append(prev_new)
             prev_new = n
@@ -800,9 +864,9 @@ def resample_tree(
         cols.append(prev_new)
 
     dA = sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n)).tocsr()
-    resampled = Tree(
-        dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z), D=np.array(D),
-        R=np.array(R), rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
+    resampled = tree.reindexed(source).copy(
+        dA=dA, X=np.array(X), Y=np.array(Y), Z=np.array(Z),
+        D=np.array(D), R=np.array(R),
     )
     return sort_tree(resampled, by="lo")
 
@@ -901,16 +965,16 @@ def _resample_matlab(
         cols.append(prev)
 
     origin_arr = np.array(origin, dtype=int)
-    dense = Tree(
+    # `origin` is already the per-node source map this needs -- every node of
+    # the dense tree names the original node it was interpolated from -- so
+    # `reindexed` carries R, Ri/Gm/Cm and per-node `meta` in one step
+    dense = tree.reindexed(origin_arr).copy(
         dA=sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n)).tocsr(),
         X=np.array(X), Y=np.array(Y), Z=np.array(Z),
         # Without diameter interpolation every node takes its origin node's
         # diameter, keeping the cable piecewise-constant; with it, the
         # interpolated values above are kept and surface/volume change.
-        D=np.array(D) if interp_diameter else tree.D[origin_arr],
-        R=tree.R[origin_arr],
-        rnames=tree.rnames, name=tree.name, frustum=tree.frustum,
-        Ri=tree.Ri, Gm=tree.Gm, Cm=tree.Cm,
+        **({"D": np.array(D)} if interp_diameter else {}),
     )
 
     # --- 3. delete every original node but the root -----------------------
@@ -1004,11 +1068,7 @@ def _collapse_small_angle_branches(
             dA[gc, keep] = 1
         to_delete.append(drop)
 
-    merged = Tree(
-        dA=dA.tocsr(), X=X, Y=Y, Z=Z, D=pruned.D, R=pruned.R,
-        rnames=pruned.rnames, name=pruned.name, frustum=pruned.frustum,
-        Ri=pruned.Ri, Gm=pruned.Gm, Cm=pruned.Cm,
-    )
+    merged = pruned.copy(dA=dA.tocsr(), X=X, Y=Y, Z=Z)
     out = delete_tree(merged, to_delete, keep_regions=not trim_regions)
     if isinstance(out, list):
         raise ValueError("resample_tree: branch collapse disconnected the tree")

@@ -16,15 +16,18 @@ package, so it cannot drift from what's actually importable.
 
 | Name | Purpose |
 |---|---|
-| `Tree` | The morphology container (`dA`, `X`, `Y`, `Z`, `D`, `R`, `rnames`, `name`, `frustum`, `Ri`, `Gm`, `Cm`) |
+| `Tree` | The morphology container (`dA`, `X`, `Y`, `Z`, `D`, `R`, `rnames`, `name`, `frustum`, `Ri`, `Gm`, `Cm`, `meta`) |
+| `Tree.meta` | Ad-hoc caller-owned data; length-`n_nodes` entries follow the nodes through every transform |
+| `Tree.total_length` / `.total_surface` / `.total_volume` | Whole-tree sums, without spelling out `len_tree(tree).sum()` |
 | `Tree.region_nodes(*names)` | Indices of nodes in the named region(s) |
 | `Tree.region_mask(*names)` | Same, as a boolean mask |
 | `Tree.region_index(name)` | The `R` value for a region name |
 | `Tree.validate(quiet=False)` | Structural check; returns a list of problems |
 | `Tree.reindexed(order)` | New tree with nodes reordered/subset |
-| `Tree.with_coords(...)` | Copy with some coordinate arrays replaced |
+| `Tree.copy(**fields)` | Copy with the named fields replaced (everything else carried over) |
 | `ver_tree(tree)` | Free-function form of `validate` |
 | `NO_PARENT` | The `-1` sentinel |
+| `missing_dependencies()` | What this install cannot do, and which extra would fix it |
 
 ## I/O
 
@@ -44,6 +47,7 @@ package, so it cannot drift from what's actually importable.
 | `sample2_tree()` | 15-node minimal tree, for doctests |
 | `hsn_tree()` / `hss_tree()` | Full HSN (1290) / HSS (2252) cells |
 | `dLPTCs_trees()` | Population: 55 cells in 5 named groups |
+| `gc_trees()` / `gc_tree()` | The eight dentate granule cells the bundled GC model is fitted to |
 
 ## Topology (needs only `dA`)
 
@@ -52,6 +56,7 @@ package, so it cannot drift from what's actually importable.
 | `idpar_tree` | Parent index of each node |
 | `idchild_tree` | Child indices of each node |
 | `ipar_tree` | Full ancestor path per node (dense, `-1`-padded) |
+| `path_to_root` | The node chain from one node up to the root, untrimmed of padding |
 | `child_tree` | Number of descendants per node |
 | `B_tree` / `C_tree` / `T_tree` | Masks: branch / continuation / termination point |
 | `typeN_tree` | Node type as an integer code |
@@ -229,8 +234,26 @@ Requires the `neuron` package — see [guide.md](guide.md#simulating-with-neuron
 | `build_neuron_model` | Tree → live `h.Section` tree (`NeuronModel`) |
 | `NeuronModel.loc(node)` | The NEURON segment for a tree node |
 | `NeuronModel.region_sections` | Sections grouped by region name |
-| `insert_mechanism` | Insert a mechanism, optionally per region |
+| `insert_mechanism` | Insert a mechanism, by region and/or node index; a parameter may be `f(distance)` |
 | `run_current_clamp` | Inject a current step, record voltage |
+
+### The Beining et al. (2017) granule cell
+
+`GC_initModel.m` as one adjustable function — see
+[src/pynetrees/gc_model.py](../src/pynetrees/gc_model.py).
+
+Everything it needs ships with the package except a compiler, so
+`GC_init(gc_tree())` is the published cell.
+
+| Name | Purpose |
+|---|---|
+| `GC_init` | Morphology + biophysics spec → a live `GCModel`; defaults to the published model |
+| `gc_spec` | Resolve a specification; pure, needs no NEURON. No argument = `GC_BIOPHYS` |
+| `GCSpec` | The specification: `.scaled()`, `.overridden()`, `.without()`, `.diff()` |
+| `GCModel` | The built model, its spec, and anything the compiled `.mod` library rejected |
+| `GC_BIOPHYS` | The bundled mechanism table — 11 regions, 570 parameters, `GC_biophys.m` as data |
+| `GC_SPINE_DENSITY` | Per-region spine factors from `GC_spinedensity.m` |
+| `gc_mod_path()` | The 44 bundled `.mod` sources, for `nrnivmodl` / `mknrndll` |
 
 ## Blender export (optional)
 

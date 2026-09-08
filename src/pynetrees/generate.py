@@ -332,11 +332,15 @@ def _wriggle(trees) -> np.ndarray:
 
 
 def _copy_tree(tree: Tree) -> Tree:
-    return Tree(
+    """A copy whose arrays are its own, for callers that mutate in place.
+
+    ``Tree.copy()`` shares the arrays it is not asked to replace, which is
+    what makes it cheap; this is the variant to reach for when the result is
+    about to be written into.
+    """
+    return tree.copy(
         dA=tree.dA.copy(), X=tree.X.copy(), Y=tree.Y.copy(), Z=tree.Z.copy(),
         D=tree.D.copy(), R=np.asarray(tree.R).copy(), rnames=list(tree.rnames),
-        name=tree.name, frustum=tree.frustum,
-        Ri=tree.Ri, Gm=tree.Gm, Cm=tree.Cm,
     )
 
 
@@ -650,9 +654,8 @@ def _clone_soma(trees, spanning, dim, generator):
                     start=0, bf=0.0, thr=10000.0, mplen=15000.0)
     tree = resample_tree(tree, 1.0)
     tree = jitter_tree(tree, 0.1, 4, rng=generator)
-    tree = Tree(dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D,
-                R=np.zeros(tree.n_nodes, dtype=int), rnames=[_SOMA],
-                name="clone")
+    tree = tree.copy(R=np.zeros(tree.n_nodes, dtype=int), rnames=[_SOMA],
+                     name="clone")
     diameter = _draw(*_mean_std(diameters), generator) if diameters else None
     return tree, diameter, float(len_tree(tree).sum())
 
@@ -756,8 +759,7 @@ def _label(tree, name: str) -> Tree:
         R[R == grown] = rnames.index(name)
     else:
         rnames[grown] = name
-    return Tree(dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D,
-                R=R, rnames=rnames, name=tree.name)
+    return tree.copy(R=R, rnames=rnames)
 
 
 def _apply_taper(tree, region, generator) -> Tree:
@@ -772,15 +774,12 @@ def _apply_taper(tree, region, generator) -> Tree:
     mask = np.asarray(tree.R) == tree.rnames.index(region.name)
     D = tree.D.copy()
     D[mask] = quad.D[mask]
-    return Tree(dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=D,
-                R=tree.R, rnames=tree.rnames, name=tree.name)
+    return tree.copy(D=D)
 
 
 def _drop_unused_regions(tree: Tree) -> Tree:
     used, R = np.unique(np.asarray(tree.R), return_inverse=True)
-    return Tree(dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D, R=R,
-                rnames=[tree.rnames[i] for i in used.tolist()],
-                name=tree.name)
+    return tree.copy(R=R, rnames=[tree.rnames[i] for i in used.tolist()])
 
 
 # ---------------------------------------------------------------------------
@@ -1067,11 +1066,7 @@ def _spine_regions(tree: Tree, separate: bool):
         if name not in rnames:
             rnames.append(name)
         indices.append(rnames.index(name))
-    relabelled = Tree(
-        dA=tree.dA, X=tree.X, Y=tree.Y, Z=tree.Z, D=tree.D,
-        R=np.asarray(tree.R), rnames=rnames, name=tree.name,
-        frustum=tree.frustum, Ri=tree.Ri, Gm=tree.Gm, Cm=tree.Cm,
-    )
+    relabelled = tree.copy(R=np.asarray(tree.R), rnames=rnames)
     return relabelled, indices[0], indices[1]
 
 

@@ -203,11 +203,26 @@ def build_neuron_model(
         region = tree.rnames[tree.R[e]]
         region_sections.setdefault(region, []).append(sec)
 
+    # A section's parent is the one whose *end* node is this section's start
+    # node. Nothing ends at the tree root, so every section starting there is
+    # parentless by that rule -- and when the root has more than one child
+    # (the normal case for a TREES soma, a short chain the root sits inside)
+    # that leaves two or more disconnected section trees. NEURON accepts it
+    # silently: `h.topology()` shows several roots, the arbors are
+    # electrically isolated, and a clamp on one sees nothing that happens on
+    # another. MATLAB's `neuron_template_tree` sidesteps this by calling
+    # `root_tree` first, which prepends a dummy node so the root has exactly
+    # one child; we cannot, because that would shift every node index and
+    # break `model.loc`. Instead the trunks are joined at their own 0 ends,
+    # which is how NEURON spells "these all start at the same point".
+    trunks = [i for i, (s, _e) in enumerate(sect) if s not in end_to_secidx]
     for i, (s, _e) in enumerate(sect):
         s = int(s)
         parent_idx = end_to_secidx.get(s)
         if parent_idx is not None and parent_idx != i:
             sections[i].connect(sections[parent_idx](1), 0)
+        elif trunks and i != trunks[0]:
+            sections[i].connect(sections[trunks[0]](0), 0)
 
     return NeuronModel(
         tree=tree,
@@ -218,24 +233,144 @@ def build_neuron_model(
     )
 
 
-def insert_mechanism(model: NeuronModel, mechanism: str, region: str | None = None, **params):
-    """Insert a NEURON mechanism (e.g. ``"hh"``) on the model's sections.
+def _target_sections(model: NeuronModel, region, nodes) -> list:
+    """The sections named by ``region`` and/or ``nodes``.
 
-    ``region=None`` (default) applies to every section; otherwise only
-    sections belonging to that tree region name (see
-    :attr:`NeuronModel.region_sections`). Keyword arguments are set as
-    ``seg.<mechanism>.<param> = value`` on every segment of every affected
-    section (a uniform value across the section -- for a spatially-varying
-    parameter, insert first and then set values directly on
-    ``model.node_section``/``model.node_x`` locations yourself).
+    Neither given means every section. Both given means the intersection,
+    which is how you say "the Kv4.2 in the distal half of the OML dendrites"
+    without inventing a region for it.
     """
-    sections = model.region_sections[region] if region is not None else model.sections
+    if region is None and nodes is None:
+        return list(model.sections)
+
+    chosen = None
+    if region is not None:
+        names = [region] if isinstance(region, str) else list(region)
+        chosen = []
+        for name in names:
+            if name not in model.region_sections:
+                raise KeyError(
+                    f"no region {name!r} in this model; it has "
+                    f"{sorted(model.region_sections)}"
+                )
+            chosen.extend(model.region_sections[name])
+
+    if nodes is not None:
+        by_node = []
+        for node in np.atleast_1d(np.asarray(nodes, dtype=int)).tolist():
+            if node not in model.node_section:
+                raise KeyError(
+                    f"node {node} is not on this model -- it has nodes "
+                    f"0..{model.tree.n_nodes - 1}"
+                )
+            by_node.append(model.node_section[node])
+        chosen = by_node if chosen is None else [
+            sec for sec in chosen if any(sec is other for other in by_node)
+        ]
+
+    # de-duplicate while keeping order: several nodes routinely land on the
+    # same section, and inserting twice would set the parameter twice
+    seen, unique = [], []
+    for sec in chosen:
+        if not any(sec is other for other in seen):
+            seen.append(sec)
+            unique.append(sec)
+    return unique
+
+
+def _distance_origin(model: NeuronModel, origin):
+    """The segment distances are measured from, as NEURON's ``h.distance``."""
+    if origin is None:
+        return model.loc(model.tree.root)
+    return model.loc(int(origin))
+
+
+def insert_mechanism(
+    model: NeuronModel,
+    mechanism: str,
+    region: str | list[str] | None = None,
+    *,
+    nodes=None,
+    origin: int | None = None,
+    **params,
+):
+    """Insert a NEURON mechanism (e.g. ``"hh"``) on part of the model.
+
+    Parameters
+    ----------
+    model : NeuronModel
+    mechanism : str
+        The mechanism to ``insert``, e.g. ``"hh"``, ``"pas"``, ``"Kv42"``.
+    region : str or list of str, optional
+        Tree region name(s) whose sections to act on (see
+        :attr:`NeuronModel.region_sections`).
+    nodes : array_like of int, optional
+        Tree node indices instead of -- or together with -- ``region``.
+        The sections those nodes live on are used, so this is how you give
+        two parts of the *same* region different channel densities without
+        having to split the region in the morphology first.
+
+        Given both, the two are intersected. Given neither, every section
+        is affected.
+    origin : int, optional
+        Node the distances passed to a callable parameter are measured
+        from. Defaults to the tree's root.
+    **params
+        Parameter values, each either
+
+        * a **scalar**, set uniformly on every affected segment, or
+        * a **callable** ``f(x)`` evaluated per segment, where ``x`` is the
+          path distance [um] from ``origin`` to that segment. This is how a
+          density gradient is expressed::
+
+              insert_mechanism(model, "hh", region="adendOML",
+                               gnabar=lambda x: 0.12 * np.exp(-x / 200.0))
+
+          NEURON measures ``x`` along the cable with ``h.distance``, so it
+          is the real electrotonic path, not a straight-line distance.
+
+    Notes
+    -----
+    A parameter NEURON exposes on the *mechanism* rather than the segment (a
+    ``GLOBAL`` in the ``.mod`` file) cannot vary along the cell, and setting
+    one per segment would silently apply the last value everywhere. Those
+    raise instead, naming the parameter -- use ``h.<param>_<mechanism>`` to
+    set it once, deliberately.
+    """
+    from neuron import h
+
+    sections = _target_sections(model, region, nodes)
+    if not sections:
+        return
+
     for sec in sections:
         sec.insert(mechanism)
+
+    ranged = {name: value for name, value in params.items() if callable(value)}
+    uniform = {name: value for name, value in params.items() if not callable(value)}
+
+    if ranged:
+        h.distance(0, _distance_origin(model, origin))
+
+    probe = getattr(next(iter(sections[0])), mechanism)
+    for name in params:
+        if not hasattr(probe, name):
+            raise AttributeError(
+                f"{mechanism!r} has no per-segment parameter {name!r}. If it "
+                f"is a GLOBAL in the .mod file, set it once as "
+                f"h.{name}_{mechanism} = ...; it cannot vary along the cell."
+            )
+
+    for sec in sections:
         for seg in sec:
             target = getattr(seg, mechanism)
-            for name, value in params.items():
+            for name, value in uniform.items():
                 setattr(target, name, value)
+            if not ranged:
+                continue
+            x = h.distance(seg)
+            for name, function in ranged.items():
+                setattr(target, name, float(function(x)))
 
 
 def run_current_clamp(

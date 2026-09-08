@@ -20,11 +20,16 @@ concatenation was supposed to save them.
 Nesting
 -------
 
-``dLPTCs_trees()`` returns groups of cells, and a ``.mtr`` file can hold a
-2-deep cell array, so a list of lists of trees gives a list of lists of
-results. One level of recursion, not arbitrary depth, because nothing in
-the toolbox produces more and unbounded recursion would silently accept a
-structure the caller did not mean.
+``dLPTCs_trees()`` returns groups of cells and a ``.mtr`` file can hold a
+cell array of cell arrays, so a list of lists of trees gives a list of
+lists of results. **Any** depth works, and the result mirrors the input
+exactly -- element ``[2][0][7]`` of the answer is the answer for tree
+``[2][0][7]``, at every level. Nothing is flattened, so a caller who
+organised their cells into groups and subgroups gets those groups back.
+
+The structure has to be *regular*: at each level either every element is a
+tree, or every element is a list. A list mixing the two (``[tree, [tree]]``)
+raises rather than guessing which level the caller meant.
 
 Empty trees
 -----------
@@ -81,13 +86,51 @@ def is_population(obj) -> bool:
 
 
 def is_nested_population(obj) -> bool:
-    """Is this a list of populations -- groups of cells, one level deep?"""
+    """Is this a list of populations -- groups of cells, nested to any depth?
+
+    Recursive rather than one-level, so ``[[[t]], [[t], [t]]]`` counts. The
+    ``not is_population(obj)`` guard is what stops a flat list of trees from
+    also answering yes, which keeps the two predicates disjoint.
+    """
     return (
         isinstance(obj, (list, tuple))
         and len(obj) > 0
         and not is_population(obj)
-        and all(is_population(group) for group in obj)
+        and all(
+            is_population(group) or is_nested_population(group) for group in obj
+        )
     )
+
+
+def _children(level, name: str) -> list:
+    """The elements of one population level, checked for a regular shape.
+
+    Either every element is a tree or every element is a list; a level that
+    mixes them is ambiguous -- ``[tree, [tree]]`` could be a 2-cell group
+    whose second cell was wrapped by mistake, or a group of groups whose
+    first entry was not -- and guessing turns a typo into a silently
+    mis-shaped result.
+    """
+    members = list(level)
+    trees = [i for i, m in enumerate(members) if isinstance(m, Tree)]
+    lists = [i for i, m in enumerate(members) if isinstance(m, (list, tuple))]
+    if trees and lists:
+        raise ValueError(
+            f"{name}: population level mixes trees (at index {trees[0]}) with "
+            f"nested lists (at index {lists[0]}). Every element of a level "
+            f"must be a tree, or every element must be a list -- wrap the "
+            f"bare trees in their own list to make the nesting explicit."
+        )
+    if len(trees) + len(lists) != len(members):
+        bad = next(
+            i for i, m in enumerate(members)
+            if not isinstance(m, (Tree, list, tuple))
+        )
+        raise TypeError(
+            f"{name}: population element {bad} is a "
+            f"{type(members[bad]).__name__}, not a Tree or a list of them"
+        )
+    return members
 
 
 def require_population(trees, name: str) -> list[Tree]:
@@ -192,34 +235,38 @@ def accepts_population(func=None, *, paired=()):
 
         @functools.wraps(function)
         def wrapper(tree, *args, **kwargs):
-            if is_nested_population(tree):
-                return [wrapper(group, *args, **kwargs) for group in tree]
-            if not is_population(tree):
+            if isinstance(tree, Tree):
+                return function(tree, *args, **kwargs)
+            if not isinstance(tree, (list, tuple)):
                 return function(tree, *args, **kwargs)
 
-            trees = require_population(tree, function.__name__)
-            if not paired:
-                return [function(t, *args, **kwargs) for t in trees]
+            # A list at this level is mapped over, and each element goes back
+            # through `wrapper` -- so a tree is computed, a list recurses, and
+            # the depth of the result matches the depth of the input however
+            # deep that is. `_children` is what rejects a ragged level.
+            members = _children(tree, function.__name__)
+            require_population(members, function.__name__)
 
-            bound = signature.bind_partial(None, *args, **kwargs)
             split = {}
-            for parameter in paired:
-                if parameter not in bound.arguments:
-                    continue
-                each = _pair(function.__name__, parameter,
-                             bound.arguments[parameter], len(trees))
-                if each is not None:
-                    split[parameter] = each
+            if paired:
+                bound = signature.bind_partial(None, *args, **kwargs)
+                for parameter in paired:
+                    if parameter not in bound.arguments:
+                        continue
+                    each = _pair(function.__name__, parameter,
+                                 bound.arguments[parameter], len(members))
+                    if each is not None:
+                        split[parameter] = each
             if not split:
-                return [function(t, *args, **kwargs) for t in trees]
+                return [wrapper(m, *args, **kwargs) for m in members]
 
             results = []
-            for index, one in enumerate(trees):
+            for index, one in enumerate(members):
                 arguments = dict(bound.arguments)
                 for parameter, values in split.items():
                     arguments[parameter] = values[index]
                 call_args, call_kwargs = _rebuild(signature, arguments)
-                results.append(function(one, *call_args, **call_kwargs))
+                results.append(wrapper(one, *call_args, **call_kwargs))
             return results
 
         wrapper.__population_paired__ = paired

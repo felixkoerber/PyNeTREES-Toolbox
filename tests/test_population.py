@@ -106,11 +106,33 @@ def test_a_list_of_groups_gives_a_list_of_groups(trees):
     np.testing.assert_array_equal(results[0][0], pt.len_tree(trees[0]))
 
 
-def test_nesting_stops_at_one_level(trees):
-    """Three deep is not a shape anything in the toolbox produces, and
-    recursing into it would silently accept a mistake."""
-    with pytest.raises((AttributeError, TypeError, ValueError)):
-        pt.len_tree([[[trees[0]]]])
+def test_nesting_goes_as_deep_as_the_caller_nested(trees):
+    """Depth is not capped: a caller who organised cells into groups and
+    subgroups gets exactly that shape back, with indices lining up."""
+    deep = [[[trees[0], trees[1]]], [[trees[2]], [trees[0], trees[1]]]]
+    results = pt.len_tree(deep)
+
+    def shape(x):
+        return [shape(e) for e in x] if isinstance(x, list) else "leaf"
+
+    assert shape(results) == [[["leaf", "leaf"]], [["leaf"], ["leaf", "leaf"]]]
+    np.testing.assert_array_equal(results[1][1][0], pt.len_tree(trees[0]))
+
+
+def test_an_empty_tree_keeps_its_slot_at_depth(trees):
+    """The whole point of not filtering: indices stay put however deep the
+    empty cell is buried."""
+    empty = pt.delete_tree(trees[0], np.arange(trees[0].n_nodes))
+    results = pt.len_tree([[trees[0], empty], [trees[1]]])
+    assert [len(g) for g in results] == [2, 1]
+    assert results[0][1].size == 0
+
+
+def test_a_ragged_level_is_refused(trees):
+    """`[tree, [tree]]` could mean either shape, so it raises rather than
+    guessing which level the caller meant."""
+    with pytest.raises(ValueError, match="mixes trees"):
+        pt.len_tree([trees[0], [trees[1]]])
 
 
 def test_the_two_population_shapes_are_told_apart(trees):
@@ -120,6 +142,7 @@ def test_the_two_population_shapes_are_told_apart(trees):
     assert not is_population([1, 2, 3])
     assert not is_population(np.zeros((3, 3)))
     assert is_nested_population([list(trees), list(trees)])
+    assert is_nested_population([[[list(trees)]]])  # any depth, not just two
     assert not is_nested_population(trees)
     assert not is_nested_population([])
 
@@ -389,7 +412,12 @@ NOT_MAPPED = {"bin_tree", "sholl_tree", "stats_tree", "vonMises_tree",
 #: Maps over a group like everything else, but has nothing to hand back for
 #: an empty cell: NEURON has no model with no sections, and returning a
 #: placeholder would be a simulation object that cannot be simulated.
-NEEDS_A_REAL_TREE = {"build_neuron_model"}
+#: `GC_init` is here for a second reason as well -- it needs a tree whose
+#: regions the granule-cell biophysics actually covers, which `sample_tree`
+#: (`dendrite`/`subtree`) is not, and inventing passive parameters for a
+#: region the spec never mentions is precisely what it refuses to do.
+#: Its own population behaviour is covered in `test_gc_model.py`.
+NEEDS_A_REAL_TREE = {"build_neuron_model", "GC_init"}
 
 #: 3D hull needs scikit-image for its marching-cubes isosurface (see
 #: density.py); optional extra, so skip these rather than fail when absent.

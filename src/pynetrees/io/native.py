@@ -23,6 +23,8 @@ save each tree to its own file, or build that batching in the caller.
 
 from __future__ import annotations
 
+import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -30,14 +32,71 @@ from scipy import sparse
 
 from ..core import Tree
 
+#: ``meta`` entries that are numpy arrays are stored as their own npz members
+#: under this prefix; everything else goes into one JSON blob. Splitting them
+#: keeps ``allow_pickle=False`` (see the module docstring) while still storing
+#: per-node annotations at full precision rather than as JSON floats.
+_META_ARRAY = "meta_array__"
+
 
 def _with_npz_suffix(path: str | Path) -> Path:
     path = Path(path)
     return path if path.suffix == ".npz" else path.with_suffix(path.suffix + ".npz")
 
 
+def _electrical_members(tree: Tree) -> dict:
+    """``Ri``/``Gm``/``Cm`` as npz members, skipping the ones left unset.
+
+    ``None`` is not storable in an ``allow_pickle=False`` archive and is the
+    overwhelmingly common case, so absence is encoded as *the member is not
+    there* rather than as a sentinel value.
+    """
+    return {
+        name: np.asarray(getattr(tree, name))
+        for name in ("Ri", "Gm", "Cm")
+        if getattr(tree, name) is not None
+    }
+
+
+def _meta_members(tree: Tree) -> dict:
+    """Split :attr:`Tree.meta` into npz array members plus one JSON blob.
+
+    Anything that is neither a numpy array nor JSON-serializable is dropped
+    with a warning: silently losing a caller's annotation is worse than
+    saying so, and refusing to write the file at all would make ``meta`` a
+    liability rather than a convenience.
+    """
+    members, plain = {}, {}
+    for key, value in tree.meta.items():
+        if isinstance(value, np.ndarray):
+            members[_META_ARRAY + key] = value
+            continue
+        try:
+            json.dumps(value)
+        except TypeError:
+            warnings.warn(
+                f"tree {tree.name!r}: meta[{key!r}] is a "
+                f"{type(value).__name__}, which .npz cannot store; dropping "
+                "it. Convert it to a numpy array or a JSON-compatible value "
+                "to keep it.",
+                stacklevel=3,
+            )
+            continue
+        plain[key] = value
+    if plain:
+        members["meta_json"] = np.array(json.dumps(plain))
+    return members
+
+
 def save_npz(tree: Tree, path: str | Path) -> Path:
-    """Save a Tree to pynetrees' native ``.npz``-based format."""
+    """Save a Tree to pynetrees' native ``.npz``-based format.
+
+    Stores everything a :class:`~pynetrees.Tree` holds: topology,
+    coordinates, regions, the ``frustum`` flag, whichever of
+    ``Ri``/``Gm``/``Cm`` are set, and :attr:`~pynetrees.Tree.meta` (numpy
+    arrays natively, the rest as JSON). This is the only format that does --
+    see :func:`save_tree`'s table for what the others drop.
+    """
     path = _with_npz_suffix(path)
     coo = tree.dA.tocoo()
     np.savez(
@@ -53,6 +112,8 @@ def save_npz(tree: Tree, path: str | Path) -> Path:
         rnames=np.array(tree.rnames),
         name=np.array(tree.name),
         frustum=np.array(tree.frustum),
+        **_electrical_members(tree),
+        **_meta_members(tree),
     )
     return path
 
@@ -65,12 +126,29 @@ def load_npz(path: str | Path) -> Tree:
             (np.ones(len(data["dA_row"])), (data["dA_row"], data["dA_col"])),
             shape=shape,
         ).tocsr()
+
+        # a 0-d array is how numpy stores the scalar form of Ri/Gm/Cm; unwrap
+        # it so the loaded tree carries a float again rather than an array
+        # that happens to broadcast
+        electrical = {}
+        for name in ("Ri", "Gm", "Cm"):
+            if name in data:
+                value = data[name]
+                electrical[name] = float(value) if value.ndim == 0 else value
+
+        meta = json.loads(str(data["meta_json"])) if "meta_json" in data else {}
+        for key in data.files:
+            if key.startswith(_META_ARRAY):
+                meta[key[len(_META_ARRAY):]] = data[key]
+
         return Tree(
             dA=dA,
             X=data["X"], Y=data["Y"], Z=data["Z"], D=data["D"], R=data["R"],
             rnames=data["rnames"].tolist(),
             name=str(data["name"]),
             frustum=bool(data["frustum"]),
+            meta=meta,
+            **electrical,
         )
 
 

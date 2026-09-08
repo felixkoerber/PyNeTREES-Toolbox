@@ -2227,3 +2227,257 @@ signature cleanup), W2 (I/O parity), W4 (return-value contract) and W7
         step number, and the `sp=1` discontinuity kept and explained in
         prose (a real, slightly surprising property of the algorithm) rather
         than hidden by re-parameterising until the plot looked nicer.
+
+---
+
+## Round 4 — 2026-09-08 (code-review response)
+
+Answers the items marked for this iteration in `PyNeTREES code review.md`
+(Round 3, post-workshop) plus the direct requests that came with it. Suite
+before: 868 passed, 17 skipped. After: see the bottom of this section.
+
+### The `Tree` object
+
+| Change | Why |
+|---|---|
+| `Tree.meta`, a caller-owned dict | The Python stand-in for tacking an ad-hoc field onto MATLAB's tree struct, which `__slots__` otherwise forbids outright. Entries whose length is `n_nodes` are **reordered and subset with the nodes** by `reindexed`, so a per-node annotation survives `delete_tree`/`sort_tree`/`resample_tree`; anything else is treated as whole-cell metadata and copied across. `.npz` round-trips both (arrays as npz members, the rest as one JSON blob, so `allow_pickle=False` still holds). |
+| `Tree.with_coords()` → **`Tree.copy(**fields)`** | Review Round 3. Generalised at the same time: it now carries *every* field it was not asked to change, and raises `TypeError` on a field name the class does not have, so `tree.copy(Xs=...)` fails at the call rather than silently returning an unmodified tree. |
+| `Tree._FIELDS` | The single list `copy` reads. Adding a field to `__init__` extends `copy` — and thus every transform built on it — without a second edit. That absence is precisely how the bug below happened. |
+
+`Tree.total_length` / `.total_surface` / `.total_volume` were **already
+present** and needed no work; they are now listed in `docs/api-overview.md`,
+which is where the request came from.
+
+#### Bug found and fixed: the editing functions silently dropped `Ri`/`Gm`/`Cm`
+
+An audit of all 32 direct `Tree(...)` constructions in `src/` found that
+**every node-count-changing transform built a bare `Tree(...)` and simply
+never mentioned the electrical properties**, so they came back `None`:
+
+    delete_tree · resample_tree · root_tree · repair_tree · elimt_tree
+    redirect_tree · insert_tree · insertp_tree · cat_tree
+
+`tree.Ri = 100; build_neuron_model(delete_tree(tree, doomed))` therefore
+failed with *"tree has no Ri set"* on a tree that visibly had one, several
+steps away from the function that lost it. Every one now routes through
+`reindexed(source).copy(...)`, where `source` names the original node each
+result node derives from — which is information those functions already had,
+since they use it for `R`. Regression test:
+`test_transforms_keep_the_electrical_properties_and_meta`, parameterised
+over all nine.
+
+`cat_tree` is the one genuinely ambiguous case (two trees, two sets of
+values); `_cat_electrical` concatenates when both sides have a value, keeps
+a shared scalar, and **warns** when only one side does rather than quietly
+returning `None`.
+
+### Populations
+
+Nesting depth is no longer capped at two (review Round 3). `len_tree` on a
+four-deep list returns a four-deep list with indices lining up at every
+level, and nothing is flattened. A *ragged* level (`[tree, [tree]]`) now
+raises instead of being guessed at, since it could mean either shape. The
+old `test_nesting_stops_at_one_level` is replaced by three tests covering
+depth, empty trees keeping their slot at depth, and the ragged case.
+
+### NEURON
+
+| Change | Why |
+|---|---|
+| **`build_neuron_model` no longer builds a disconnected cell** | A section's parent is the one whose *end* node is its start node — and nothing ends at the root, so with a multi-child root (the normal case for a TREES soma) every trunk was parentless and the cell came back as 2+ **electrically isolated** section trees. NEURON accepts that silently; a clamp on one sees nothing that happens on the other. Confirmed on the Beining granule cell: 2 parentless sections of 62. MATLAB's `neuron_template_tree` avoids it by calling `root_tree` first, which we cannot (it would shift every node index and break `model.loc`), so the trunks are joined at their own `0` ends instead — NEURON's spelling of "these all start at the same point". |
+| `insert_mechanism(..., nodes=...)` | Review Round 3: target by node index, not only by region name, so two parts of the same region can carry different densities without splitting the region in the morphology first. Given both, they intersect. |
+| `insert_mechanism(..., param=f(x))` | Review Round 3: a parameter may be a callable evaluated per segment with `x` = path distance [um] from `origin` (default the root), measured by `h.distance` along the real cable. `gnabar=lambda x: 0.12 * np.exp(-x / 200)` is now the whole of a density gradient. A `GLOBAL` parameter raises rather than being set per segment, where only the last value would survive. |
+
+### `pynetrees.gc_model` — `GC_init` (new)
+
+`GC_initModel.m` as one adjustable function. The split is the point:
+`GC_biophys.m` (656 lines) and `GC_spinedensity.m` are a **data table written
+as control flow** — a chain of `strfind(options, '-x')` tests computing a
+nested struct — so this takes the table as data (`gc_spec`, from a JSON dump
+of `neuron.mech{1}`, a dict, or another spec) and keeps the function for
+composing, scaling and applying it.
+
+- A variant is a **value**, not a flag string: `spec.scaled({"Kir21": 0.5})`
+  against `GC_biophys('-a-p-n-y')`. `GCSpec.diff` answers "what does `-y`
+  actually change?", which the original cannot.
+- `GCSpec` is frozen; `.scaled()`, `.overridden()`, `.without()` all derive.
+- `spine_scale` reproduces `scale_spines.m`, and **refuses to run on a spec
+  that already has it folded in** — a MATLAB dump made with
+  `ostruct.scalespines = 1` does, which `adendMML.pas.cm = 1.71 = 0.9 * 1.9`
+  gives away.
+- Passive parameters are folded into `Ri`/`Gm`/`Cm` **before** the sections
+  exist, because the d-lambda rule reads `Ra` and `cm` to choose `nseg`.
+  A region with no passive block raises rather than getting `Ra = nan`,
+  which NEURON accepts and turns into `nan` voltages seconds later.
+- `GCModel.skipped` lists every `(region, mechanism, parameter)` the
+  compiled `.mod` library would not take, instead of ignoring them.
+
+`ostruct.usemorph` (16 hard-coded `.mtr` paths) is deliberately not ported:
+`load_tree` reads all of them, and a number meaning "SH07 cells" only in one
+directory layout is not an API.
+
+Verified end to end on `SH_07_all_repairedandsomaAIS_MLyzed.mtr` with the
+model's compiled `lib_mech`: 2173 nodes → 62 sections, per-region passive
+exact against the JSON (`soma cm=0.9`, `adendMML cm=1.71`,
+`axonh g=6.59e-6`), and the cell fires.
+
+**Second bug found here:** the `<ion>_ion` blocks were being applied in the
+same pass as the channels, but a segment only grows an `ek` attribute once
+something carrying potassium has been inserted into it — so **every reversal
+potential was silently dropped** and `ek` stayed at NEURON's default −77 mV
+instead of the model's −93 mV, on a cell whose whole point is its potassium
+conductances. Now a second pass, after the channels.
+
+### `MST_tree` — verified against MATLAB R2026a
+
+Four fixed clouds (150 pts 2-D, 200 pts 3-D, 300 pts shared between three
+seeds, one with `mplen` binding), compared edge-by-edge at matched
+coordinates.
+
+| Case | Before | After |
+|---|---|---|
+| `single2d`, `single3d`, `mplen` | Jaccard **1.000** | unchanged |
+| `multi` (3 seeds) | Jaccard 0.911 — sizes 94/124/85 vs MATLAB's 101/101/101 | Jaccard **1.000**, sizes **101/101/101**, same total cable to 0.1 um |
+
+The multi-tree fix is the one the review names: MATLAB's growth loop is
+
+    while something_was_added
+        for counter = 1 : n_trees        % strictly in index order
+            take THIS tree's own cheapest available connection
+
+so the trees **take turns**, one connection each per sweep. The port had a
+single global heap popping the absolute cheapest connection anywhere, which
+lets a tree in a denser patch run ahead and claim territory before its
+neighbours have had a turn — and the territories are the reason multi-tree
+growth exists. Now one heap per tree with `best_cost` per tree (two trees can
+hold different best offers for the same point), swept round-robin. Single-tree
+growth is unaffected: one tree means one turn per sweep.
+
+### Smaller items
+
+- **`path_to_root(tree, node)`** (new). The review's "if the root, don't look
+  for the parent indexing (currently −1)". An audit found the library itself
+  is clean — every internal `v[idpar]` uses `root_self=True`, every
+  `root_self=False` call tests `!= NO_PARENT` — so the hazard is in *user*
+  code, where `while par[x] > 0` silently drops the root whenever the root is
+  node 0, and `v[parent[root]]` reads the **last** node under NumPy's
+  negative indexing and returns a plausible number rather than raising.
+  `path_to_root` is the operation people were hand-writing; `idpar_tree`'s
+  docstring now states the hazard outright.
+- **`dissect_tree(with_positions=)` → `full_output=`**. The one function
+  using a different name for the "also return MATLAB's second output" flag;
+  every other one (`MST_tree`, `insert_tree`, `insertp_tree`,
+  `redirect_tree`, `sort_tree`, `spines_tree`, `dscam_tree`, `spread_tree`)
+  already said `full_output`. `sub_tree(with_tree=)` deliberately keeps its
+  name — it is a *cost* flag (skip building the subtree in a hot loop), not
+  an output-shape flag, and the result is a `SubTree` either way.
+- **`save_npz` now stores `Ri`/`Gm`/`Cm`** as well as `meta`. The module
+  docstring called it "the only format that stores everything a Tree holds";
+  it did not.
+- **`ipykernel` pinned below 7** in both `pyproject.toml` and
+  `requirements.txt` — 7.x's startup/debug handshake leaves cells stuck on
+  "connecting" under VS Code's Jupyter extension.
+- **`_load_mechanisms` resolves its path.** NEURON hands the path to the
+  platform loader as-is, and Windows' `LoadLibrary` does not interpret it
+  relative to the Python process's cwd — a relative path failed with a bare
+  "module not found".
+
+### Notebooks (same pass)
+
+- **`examples/08_granule_cell_model.ipynb`, new** — the tutorial for
+  `GC_init`. Three parts, each with a different floor: §1 (resolving and
+  diffing a specification) needs only `pynetrees`, §2 (building one) adds
+  `neuron`, §3 (the real Beining cell) needs the morphology and the compiled
+  `.mod` library and skips cleanly without them. Executed end to end on this
+  machine, so every number in it is real — including the sodium knockout,
+  which is the payoff of variants-as-values: same call, different spec,
+  3 spikes → 0 and a peak of −39.5 mV.
+
+  §2 deliberately builds on a *relabelled bundled tree* rather than the real
+  morphology, so the passive path and the `skipped` reporting are
+  demonstrable for a reader who has neither file.
+
+- **`examples/04_neuron_simulation.ipynb` updated.** Its "with a granule cell
+  you would write…" placeholder is replaced by the two capabilities that now
+  exist: `insert_mechanism(nodes=...)` and callable parameters. Re-executed.
+
+- **`scripts/dendritic_democracy.ipynb` updated** for the
+  `build_neuron_model` connectivity fix. It clamped and recorded at
+  `dendIDs[-1]` — a direct child of the root — precisely because the soma's
+  own section used to be electrically detached; that now reads back at the
+  soma. **Its stored outputs predate the fix and need a re-run**, which a
+  banner at the top of the notebook says; on this morphology the isolated
+  stub fired 12 spikes to a 0.09 nA step where the properly-loaded soma fires
+  3, so every figure in it will move.
+
+  Its hand-written parent walk is now `path_to_root`, which also fixes a real
+  off-by-one: `while par[x] > 0` stopped one node short of the soma, because
+  the root is node 0 after `sort_tree`. MATLAB's `while par(x) ~= 0`
+  **includes** the root, so the port had been walking a path one node shorter
+  than the original all along.
+
+#### Third bug found, this time by writing the tutorial
+
+`GC_init(..., mech_library=...)` **failed the second time it was called in one
+process**: `nrn_load_dll` is not idempotent and aborts with *"The user defined
+name already exists: BK"*. Comparing two variants of a model in one session —
+exactly what the tutorial does, and the main thing having variants is for — hit
+it immediately. `_load_mechanisms` now records what it has loaded by resolved
+path and returns early. Covered by
+`test_a_mechanism_library_loads_only_once_per_process`.
+
+Suite after the notebook work: **924 passed, 17 skipped**.
+
+### The granule-cell model ships with the package (same pass)
+
+`GC_init` originally took a path to a JSON dump. That made the published
+model something you had to *find* before you could run it, which is the wrong
+default for the one model the package names in its API. Now everything except
+a compiler is bundled:
+
+| | What | Size |
+|---|---|---|
+| `pynetrees._gc_biophys.GC_BIOPHYS` | the mechanism table — 11 regions, 106 mechanism entries, 570 parameters | 565 lines |
+| `data/gc.mtr` → `gc_trees()`, `gc_tree()` | the eight reconstructions the model is fitted to | 904 KB |
+| `data/gc_mod/*.mod` → `gc_mod_path()` | the 44 NEURON mechanism sources | 206 KB |
+
+so `GC_init(gc_tree(), cut_axon=True, mech_library=...)` is the published cell
+end to end, and `gc_spec()` with no arguments is its biophysics.
+
+**`_gc_biophys.py` is a separate module on purpose**, mirroring MATLAB's own
+split: `GC_biophys.m` is a file that *returns* the struct and `GC_initModel.m`
+is the file that *uses* it. The difference is that the MATLAB version computes
+the table from a 656-line chain of `strfind(options, '-x')` tests, so reading
+off what a variant contains means executing it in your head; here it is
+written down. It is generated once from the MATLAB dump and verified exact
+against it — 570 parameters, all equal — by
+`test_the_bundled_table_matches_the_matlab_dump_exactly`, which skips when the
+dump is not checked in and so cannot rot into a test of nothing.
+
+The compiled products are deliberately **not** bundled: ~23 MB, and valid only
+for the exact NEURON version and architecture they were built against, so
+shipping one would ship something that silently refuses to load for most
+people. `gc_mod_path()` exists to make building them a one-liner
+(`nrnivmodl $(python -c 'import pynetrees; print(pynetrees.gc_mod_path())')`),
+and `GC_init` reports every mechanism it could not apply rather than quietly
+building half a model.
+
+`GC_init` and `gc_spec` both default to the bundled table, so the `mech`
+argument is now for when you want a *different* model rather than for getting
+the obvious one. `gc_spec` deep-copies it, so no amount of scaling or
+overriding can reach back and edit the module constant every later call reads
+— covered by `test_the_bundled_table_is_not_handed_out_to_be_mutated`.
+
+`examples/08_granule_cell_model.ipynb` was rewritten around this and no longer
+references any path outside the package; the only thing it looks for on disk
+is a compiled library, and it says how to build one when there is none.
+
+One consequence worth noting: `GC_init` now appears in `test_population.py`'s
+generic "every mapped function keeps its shape" sweep, because `mech` gained a
+default and it stopped being filtered out as needing an argument. It is
+excluded there with a reason — it needs a tree whose regions the granule-cell
+table covers, and `sample_tree`'s `dendrite`/`subtree` are not among them —
+and its population behaviour is covered on trees that qualify in
+`test_gc_model.py` instead.
+
+Suite: **932 passed, 17 skipped**.

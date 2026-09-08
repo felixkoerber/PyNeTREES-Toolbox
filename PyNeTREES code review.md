@@ -1,0 +1,143 @@
+## Round 1
+- `IO` functions
+	- `native.py`
+		- `load_tree()`/`save_tree()`
+			- go against design decision #26 and create a switch case. the matlab version allows for '*.mtr; *.swc; *.neu; *.nmf' filetypes
+			- add the same file-finding prompt matlab does if no filenames are given
+			- no compatibility with matlab formats?
+				- ((6a7d9d73-b442-481f-a8bc-27b0d260796b))
+				- would it be possible for `save_tree()` to output `.mtr` files? add as a `matlab_format` flag
+			- "Only handles a single Tree per file. MATLAB's ``save_tree``/``load_tree`` also accept nested cell arrays of many trees; that's population-level tooling out of scope here (see Phase 9's `list[Tree]` + `pandas` plan) -- save each tree to its own file, or build that batching in the caller."
+				- `load_mtr()` can handle multiple files. embarrassing
+	- `mtr.py` handles matlab workspace files; both `.mtr` and `.mat`
+		- merge `load_mtr()` with `load_tree()` to allow full cross compatibility
+		  id:: 6a7d9d73-b442-481f-a8bc-27b0d260796b
+		- add matlab v7.3 compatibility - matlab `save_tree()` uses v7.3 by default, needed to handle large files
+		  id:: 6a7da40e-3120-4ebf-b6f1-1933e0973275
+		- l49 - requires a `tree` variable??
+			- refuses to load if the object is not called tree
+	- `swc.py` for SWC files
+		- should call `repair_tree()` like the matlab version; doesn't do so in this port only because the function wasn't yet ported when `load_swc()` was  being implemented
+		- should also be able to handle SWC files with multiple neurons
+	- `neurolocida.py` for Neurolucida files
+		- all matlab features should be ported
+-
+- `core.py`
+	- add a total length property to the `Tree` class similar to `n_nodes` to avoid the previous `sum(len_tree(tree))` syntax from matlab
+-
+- `graphtheory.py`
+	- `idpar_tree()` `no_self` argument doesn't make too much sense. change to `root_self` and flip the boolean
+	- `ipar_tree()` drops support for the `-T` option matlab had: 'Only paths from termination point to first branch point'. is this important?
+	- `sub_tree()` missing second output, which is the actual subtree. important? "trivial to add via `tree.reindexed(np.flatnonzero(mask))` once a caller needs it"
+	- `redirect_tree()` returns two outputs
+	- `sort_tree()`, design decision #12 - uses a different sort method
+	- `Pvec_tree()` should default to `len_tree()`
+	- `dissect_tree()` missing second output, self admitted. the port fixed a bug in matlab too; should probably double check
+	- some functions were moved around; `gene_tree()`, `bin_tree()`, `dist_tree()` to `metrics.py`
+-
+- `metrics.py` "Pure functions only."
+	- moved functions around depending on what other functions they need
+	- `cyl_tree` "the `'-dA'` sparse-matrix output form dropped — MATLAB's own comment calls it "SLOW!!" and nothing else in the toolbox uses it"
+	- unrelated to the port, but `direction_tree()`'s behavior to return for the root its direction with the first node is a bit strange
+	- `tran_tree()` default behavior is to translate to node 0, which is the root. does this do the same as matlab's default, which is translate to [0, 0, 0]? does it even do anything as it?
+	- "`rot_tree`'s PCA/`-m3d`/`-al` modes are not ported (niche, needs region-plane fitting; the common degree-based rotation is implemented here)." the full options are important and should be ported
+	- minor: `morph_tree()` does not need the dependence on `tran_tree()`; can translate X, Y, Z coordinates at the end using `with_coords()` only
+	- specifically removed population-level tooling in `gene_tree()`
+	- some functions were moved around; `abel_tree()`, `rootangle_tree()` to `edit.py`
+-
+- `edit.py`
+	- `delete_tree()` raises an error for full tree deletion, while matlab will return an empty tree
+	- `elimt_tree()` change `no_root` argument to `at_root`. also returns 2 outputs, the second just being whether anything was changed or not. remove and maybe just print out a message if nothing is changed instead
+	- `insert_tree()` how does it work? does it allow new nodes to be parents of each other? how? it also doesn't return the indices of the added nodes
+	- `insertp_tree()` also has 2 outputs
+	- `resample_tree()` uses a different resampling method than matlab; should have the original method as default (with all options, such as length conservation and diameter interpolation) and the new version as an option
+-
+- `construct.py`
+	- `MST_tree()` need to port full options from matlab, such as multi-tree growth, `DIST` support, grow-from-cut-ends-only mode, and time-lapse recording. also returns two outputs
+	- `BCT_tree()` does not add coordinates to the tree by default. it probably should add an `xdend_tree()` run at the end
+	- `soma_tree()` add missing overlap correction option. does the port still match `maxD` and `length`?
+	- `cap_tree()` '-a' option to 'add axon' not ported. seems to assume root at 0? thought that was avoided in the implementation of the other functions
+	- `smoothbranch()` should maybe be a private class function?
+-
+- `plotting.py`
+	- `plot_tree()` `color` and `scalars` should not be separate arguments; must replicated the matlab version's `color` argument which can be a single color, a list of colors, or scalars to color the nodes by. default argument order should also follow matlab's
+	- `pointer_tree()` port electrode rendering options
+	- `chull_tree()` should be able to plot the hull in 2D cases as well. also make dimension input (`dim2` here) argument consistent across all functions - either pass it as a boolean `dim2` flag or as an integer `dim = 2` or `dim = 3` argument.
+	- `plot_tree_mpl()` rename to `plot_mpl_tree()`
+	- `dA_tree_mpl()` rename to `dA_tree()`
+	- `dendrogram_tree()` port the coordinate offset parameter. maybe check if tree is BCT-conforming first
+	- `spread_trees()` should be combined with `spread_tree()` into one function that returns both (first) the translated trees and (second) the offsets
+-
+- `stats.py`
+	- the `ShollResult` class is unnecessary. have `sholl_tree()` return a list or dictionary of all the outputs. would be nice if the graphical plotting options of this function were also ported
+	- `vonMises_tree()` has population tooling. most other functions should also be setup this way, where appropriate, to allow multi-neuron analysis.  dimension argument here is a string - see previous comment about uniformly making the dimension argument an integer across the entire codebase
+	- `bf_tree()` rename the `params` argument to `values`
+	- `stats_tree()` did not go through it in detail. but it should be able to run `hull_tree()`/`vhull_tree()`
+-
+- `electrotonics.py`
+	- `cgin_tree()` looks correct but double check that the equations are equivalent
+-
+- ## Round 2
+  id:: 6a858740-eb59-4b79-8d8d-3dc4b30def48
+- IO
+	- `load_mtr()` `tree` variable bug fix is not great - just load whatever variable is in the `.mtr` file without 'preferring' a variable called `tree`. there can only be variable in the file anyway
+	- `save_tree()` needs to be able to save large morphologies as `.mtr`. The current port saving with v5 creates a limit on file size. If it is not possible to save with v7.3, keep v5 saving but switch to a different matlab-readable filetype (for example .`swc`) for files that crash
+- the modifications made to `delete_tree()` and downstream functions to allow empty trees to exist are correct; this should also apply to other functions, such that they don't crash when presented with an empty tree input but instead return an empty output. For example, if I pass an empty tree to the `len_tree()` or `B_tree()` functions, they should return an empty output instead of raising an error.
+- Population-level tooling
+	- all eligible trees toolbox functions need to support working with populations of trees as well as individual trees, ie accept both (nested) lists of trees and individual trees and return the output in the same format
+	- this is particularly the case for functions that compute metrics or create boolean masks for trees, but is also true for edit functions. functions like `morph_tree()` which require both tree input and the indices to work on should be able to accept lists for both arguments and return a list of outputs when needed, one element for each tree. it would obviously need to raise if there is a mismatch between inputs given
+	- `plot_tree()` especially should support taking a list of trees as input and plotting all the trees in it
+	- populations also need to have empty tree support, such that they can have empty trees that are not deleted (to maintain tree indices and not silently change them.) applying a population-level function to a list of trees should simply return empty outputs where there are empty trees
+- missing ports:
+	- all functions in the generative pipeline need to be ported into python except for `fix_tree()`, `finetune_fix_tree()`, and `fix_tree_UI()`
+	- port the `cyl_tree()` `-dA` option
+	- still need `pov_tree()` and `x3d_tree()` to be ported
+	- port the functions newly added to the GitHub
+- details:
+	- the ShollResult object should also be a named tuple.
+	- python port not in use yet; there is no need for deprecation shims between port versions
+		- `bf_tree()` no need to handle `params` deprecation
+		- same for the `plot_tree_mpl()` and `dA_tree_mpl()` handles
+		- same for handling the different versions of the `dim` parameter
+		- remove deprecated `spread_trees()`
+		- same for the `no_root` parameter change in `idpar_tree()` and `elimt_tree()`
+	- rename `resample_tree()` `method='matlab'` to `method='default'`
+	- rename the `plot_sholl()` function to `plot_sholl_tree()`
+- open questions:
+	- "**MATLAB's 500 um fudge is reproduced but exposed.** Its 3D branch silently doubles the estimated mean branch length for cells reaching past 500 um, with no comment, no docstring mention, and no 2D counterpart. Kept for fidelity -- changing it would move published numbers silently -- but surfaced as `scale_factor=`, which `1.0` disables. Same treatment for its 2D-only first-bin extrapolation of the root-angle histogram, reproduced and documented rather than quietly harmonised." explain?
+	- would it be possible to make `insert_tree()` accept both an entire SWC-format matrix or the individual [X Y Z R iparent] arguments?
+	- already asked, not sure if answered: does `soma_tree()` match `maxD` and `l` by default? as in, is there a relation that is maintained between the two variables that limits potential soma shapes?
+	- brainstorm: what additional functions could be added that would be useful for the analysis of connectomic data?
+	- collect all function docstrings
+-
+- ## Round 3 - post-workshop
+	- lazily importing the 'heavier' packages only when needed makes sense, but there should be a warning if importing the entire PyNeTREES package specifying which requirements are not met and which functionalities will not be available (eg neuron is not installed; electrophysiological simulation will not work)
+	- RE the TREES class
+		- remove `tree.region_nodes()` and `tree.region_index()`; rename `tree.region_mask()` to `tree.region_nodes()`; replace use in all code
+		- `tree.validate()` as a convenience wrapper for `ver_tree(tree)` does not add much to package ease of use. remove
+		- rename `tree.with_coords()` to `tree.copy()`
+	- RE population tooling
+		- more than 2 levels of nesting needs to be allowed - there should not be a limit on it
+		- nesting structure always needs to be respected and followed when running functions on populations of trees. for example if i run `len_tree()` on a population of trees with 4 levels of nesting, the output needs to have the same level of nesting, with output indices matching the indices of the input trees. the same applies to `load_tree()` reading in a nested structure should result in a nested structure without flattening
+		- for functions that take multiple trees as input (eg `peters_tree()`), add a boolean argument `pairwise=True`, such that default behavior when receiving populations of trees as input should be to run the function in a pairwise manner on all tree. setting `pairwise=False` would run the function element-wise on input lists of trees. the function should obviously raise in the latter case if the nesting structures of the populations do not match.
+	- can `load_tree()` select/load multiple files at once through the GUI?
+	- RE `plot_tree()`
+		- add missing options - `blatt`, `quiver`
+		- make `lighting = False` default
+	- use MATLAB directly (not Octave) to validate the functions that couldn't be done before due to lack of access (`boundary_tree()`, `convexity_tree()`, `r_ms_tree()`, `dissectSholl_tree()`, `growth_tree()`)
+		- `boundary_tree()` can produce disconnected boundaries if sampling is sparse (eg when looking at pyramidal cells). Behaviour should be to always produce a connected boundary.
+		- `boundary_tree()` typically produces slightly different regions to Matlab. Thresholds for region selection are different.
+		- Matlab `boundary_tree()` also automatically simplifies complex boundaries into same-volume equivalents. PyNeTREES returns the raw boundary.
+		- Python `boundary_tree()` should recompute convexity if not specified to match Matlab version.
+		- need `boundary()` and `inpolyhedron()` to be implemented
+	- RE `MST_tree()`
+		- the python port should produce identical results to the original matlab version/implementation
+		- why is `_seed_tree()` a separate function? its only ever used once. could be useful for growth_tree() and local_growth_tree()
+		- `MST_tree()` needs to be able to produce the intermediate steps. just reconstruct from the record at the end
+		- in the multi-tree growth mode: in the matlab implementation, the outer loop iterates over the open points, but the inner for loop forces trees to take turns finding their local minimums. However, in the python port, instead of iterating through each tree one by one, it places all available connections from all trees into a single global priority queue (heap). The loop simply pops the absolute cheapest connection available across the entire set, regardless or whose turn it is.
+			- just need to separate the heaps across trees
+		- should also be able to plot. post-model plotting also acceptable
+	- RE neuron simulation
+		- it would be useful to have the option to generate the `.hoc` files needed to run the current simulation + setup directly in neuron
+		- `insert_mechanisms()` only takes as input region names; it should have the option of taking node indices instead as we could need to have different mechanisms within the same region
+		- For Neuron integration, range variables for channel densities should be implementable from the mech/json/dict definition. Possibly allow a range equation `f(x)` that is implemented. Eg `if f(x)=exp(x/lambda_g), then for sec in dendrites: for seg in sec: d = h.distance(soma(0.5), seg) seg.hh.gnabar = g0 * np.exp(d / lambda_g)`.

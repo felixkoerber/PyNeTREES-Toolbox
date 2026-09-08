@@ -25,3 +25,13 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Compiled NEURON mechanisms. The .mod sources are worth keeping; the build
+# products are 23 MB, are rebuilt by nrnivmodl/mknrndll, and are specific to
+# one NEURON version and architecture.
+*.dll
+*.o
+lib_mech/
+lib_mech.zip
+x86_64/
+arm64/

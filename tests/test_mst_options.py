@@ -199,3 +199,64 @@ def test_balancing_factor_still_trades_wiring_for_path_length(cloud):
     path = pt.MST_tree(X, Y, Z, bf=1.0, thr=60.0)
     assert wire.total_length <= path.total_length
     assert pt.Pvec_tree(path).mean() <= pt.Pvec_tree(wire).mean()
+
+
+# ---------------------------------------------------------------------------
+# multi-tree growth: trees take turns, as MATLAB's outer loop does
+# ---------------------------------------------------------------------------
+
+
+def test_competing_trees_take_turns_rather_than_racing():
+    """MATLAB grows one connection per tree per sweep::
+
+        while something_was_added
+            for counter = 1 : n_trees      % strictly in index order
+                take THIS tree's own cheapest available connection
+
+    so equivalent seeds in a uniform cloud end up with equal territories.
+    A single global heap instead pops the cheapest connection anywhere,
+    letting a tree in a denser patch run ahead -- which on this cloud gave
+    94/124/85 against MATLAB's 101/101/101.
+    """
+    rng = np.random.default_rng(20260908)
+    n = 300
+    X = np.concatenate([[20.0, 100.0, 180.0], rng.uniform(0, 200, n)])
+    Y = np.concatenate([[50.0, 50.0, 50.0], rng.uniform(0, 100, n)])
+    Z = np.zeros(n + 3)
+
+    trees = pt.MST_tree(X, Y, Z, start=[0, 1, 2], bf=0.4, thr=40.0)
+
+    sizes = sorted(t.n_nodes for t in trees)
+    assert sum(sizes) == n + 3
+    # verified against MATLAB R2026a's MST_tree on this exact cloud
+    assert sizes == [101, 101, 101]
+
+
+def test_a_point_claimed_in_a_sweep_is_gone_for_the_later_trees():
+    """Within one sweep the trees are ordered, so tree 0 takes its pick
+    before tree 1 sees the cloud -- no point may end up in two trees."""
+    rng = np.random.default_rng(7)
+    X = np.concatenate([[0.0, 30.0], rng.uniform(0, 30, 120)])
+    Y = np.concatenate([[0.0, 0.0], rng.uniform(-15, 15, 120)])
+    Z = np.zeros(122)
+
+    trees = pt.MST_tree(X, Y, Z, start=[0, 1], bf=0.3, thr=25.0)
+    placed = [
+        (round(float(x), 6), round(float(y), 6))
+        for t in trees for x, y in zip(t.X, t.Y)
+    ]
+    assert len(placed) == len(set(placed))
+
+
+def test_single_tree_growth_is_unaffected_by_the_turn_taking():
+    """One tree means one turn per sweep, i.e. exactly the old behaviour --
+    and this case is bit-identical to MATLAB."""
+    rng = np.random.default_rng(20260908)
+    X = np.concatenate([[50.0], rng.uniform(0, 100, 150)])
+    Y = np.concatenate([[50.0], rng.uniform(0, 100, 150)])
+    Z = np.zeros(151)
+
+    tree = pt.MST_tree(X, Y, Z, start=0, bf=0.5, thr=50.0)
+    assert tree.n_nodes == 151
+    # MATLAB R2026a on the same cloud: 976.1 um of cable
+    assert float(pt.len_tree(tree).sum()) == pytest.approx(976.1, abs=0.1)

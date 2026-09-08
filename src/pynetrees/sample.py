@@ -12,7 +12,9 @@ function             file           nodes   what it is
 :func:`hss_tree`     hss.mtr          2252  full HSS cell
 ===================  =============  ======  ===================================
 
-plus :func:`dLPTCs_trees`, a 55-reconstruction population in 5 named groups.
+plus :func:`dLPTCs_trees`, a 55-reconstruction population in 5 named groups,
+and :func:`gc_trees`, the eight granule cells the bundled granule-cell model
+(:mod:`pynetrees.gc_model`) is fitted to.
 
 A note on history, because it changed what ``sample_tree()`` returns
 ------------------------------------------------------------------
@@ -132,3 +134,48 @@ def dLPTCs_trees() -> dict[str, list[Tree]]:
 
     with resources.as_file(resources.files("pynetrees") / "data" / "dLPTCs.mtr") as path:
         return load_grouped_mtr(path)
+
+
+def gc_trees() -> list[Tree]:
+    """The eight dentate granule cells of Beining et al. (2017).
+
+    ``SH_07_all_repairedandsomaAIS_MLyzed.mtr`` from the Active GC Model
+    package -- reconstructions repaired, somata and axon initial segments
+    reconstructed, and molecular-layer boundaries assigned, which is what
+    gives them the region names :func:`~pynetrees.GC_init` expects:
+    ``soma``, ``GCL``, ``SGCL``, ``adendIML``/``adendMML``/``adendOML``,
+    ``axonh``, ``axon``.
+
+    Bundled because a model is not reproducible without the morphology it
+    was fitted to. ``GC_init`` defaults to the matching biophysics, so::
+
+        gc = GC_init(gc_tree(), cut_axon=True, mech_library=...)
+
+    is the published cell end to end.
+
+    Returns
+    -------
+    list[Tree]
+        Eight cells of 2900-4300 nodes each.
+
+    See Also
+    --------
+    gc_tree : just the first one.
+    pynetrees.gc_model.gc_mod_path : the ``.mod`` sources to compile.
+    """
+    trees = _load_bundled("gc.mtr", "gc")
+    for index, tree in enumerate(trees, start=1):
+        tree.name = f"GC{index}"
+    return trees
+
+
+def gc_tree(index: int = 0) -> Tree:
+    """One dentate granule cell from :func:`gc_trees` (default: the first).
+
+    The cell the Active GC Model scripts use by default.
+
+    Returns
+    -------
+    Tree
+    """
+    return gc_trees()[index]

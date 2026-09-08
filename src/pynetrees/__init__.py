@@ -1,3 +1,4 @@
+from ._optional import missing_dependencies, warn_about_missing
 from .core import NO_PARENT, Tree, ver_tree
 from .density import (
     Span,
@@ -30,6 +31,7 @@ from .graphtheory import (
     idchild_tree,
     idpar_tree,
     ipar_tree,
+    path_to_root,
     ratio_tree,
     redirect_tree,
     rindex_tree,
@@ -151,8 +153,19 @@ from .electrotonics import (
     syncat_tree,
 )
 from .neuron_bridge import NeuronModel, build_neuron_model, insert_mechanism, run_current_clamp
+from .gc_model import (
+    GCModel,
+    GCSpec,
+    GC_BIOPHYS,
+    GC_SPINE_DENSITY,
+    GC_init,
+    gc_mod_path,
+    gc_spec,
+)
 from .sample import (
     dLPTCs_trees,
+    gc_tree,
+    gc_trees,
     hsn_tree,
     hss_tree,
     sample2_tree,
@@ -195,8 +208,18 @@ from .stats import (
 
 __all__ = [
     "NO_PARENT",
+    "missing_dependencies",
     "Tree",
     "ver_tree",
+    "GCModel",
+    "GCSpec",
+    "GC_BIOPHYS",
+    "GC_SPINE_DENSITY",
+    "GC_init",
+    "gc_mod_path",
+    "gc_tree",
+    "gc_trees",
+    "gc_spec",
     "Boundary",
     "boundary_tree",
     "convexity_tree",
@@ -234,6 +257,7 @@ __all__ = [
     "idchild_tree",
     "PL_tree",
     "ipar_tree",
+    "path_to_root",
     "BO_tree",
     "LO_tree",
     "child_tree",
@@ -368,3 +392,9 @@ __all__ = [
     "insert_mechanism",
     "run_current_clamp",
 ]
+
+# Last, so that a warning cannot interrupt the imports above: say once what
+# this installation cannot do, rather than letting each optional dependency
+# announce itself as an ImportError deep inside the first call that needed
+# it. Set PYNETREES_NO_DEPENDENCY_WARNING=1 to silence.
+warn_about_missing()

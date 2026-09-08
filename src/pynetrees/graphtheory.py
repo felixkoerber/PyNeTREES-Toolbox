@@ -166,6 +166,15 @@ def idpar_tree(tree: Tree, root_self: bool = True) -> np.ndarray:
         instead, which is what you want when you are about to *walk* the
         parent chain and need a stopping condition.
 
+        **Never index with the result of ``root_self=False``.** ``-1`` is
+        a valid NumPy index, so ``v[idpar]`` silently gives the root the
+        *last* node's value instead of raising -- a plausible number that
+        nothing downstream will question. Test ``!= NO_PARENT`` first, or
+        keep the default ``root_self=True``, where indexing is well
+        defined because the root refers to itself. To follow the chain up
+        to the root, reach for :func:`path_to_root` rather than writing
+        the loop yourself.
+
     Returns
     -------
     np.ndarray
@@ -306,6 +315,72 @@ def ipar_tree(tree: Tree, terminals_only: bool = False, nodes=None) -> np.ndarra
 
 
 @accepts_population
+@accepts_population(paired="node")
+def path_to_root(tree: Tree, node: int) -> np.ndarray:
+    """The chain of nodes from ``node`` up to the root, inclusive.
+
+    ``[node, parent(node), ..., root]`` with no padding -- the trimmed form
+    of one row of :func:`ipar_tree`, which is what callers actually want
+    when they are following a dendrite back to the soma.
+
+    It exists because the hand-written version of this loop is a reliable
+    source of off-by-one errors. The obvious spelling is::
+
+        parent = idpar_tree(tree, root_self=False)
+        chain = [node]
+        while parent[chain[-1]] > 0:          # WRONG in two ways
+            chain.append(parent[chain[-1]])
+
+    ``> 0`` silently drops the root whenever the root is node ``0`` (which
+    it is after :func:`~pynetrees.sort_tree`), and ``>= 0`` is only right
+    because :data:`~pynetrees.NO_PARENT` is ``-1``: write ``!= NO_PARENT``
+    and the intent survives. Worse, using the sentinel as an index at all --
+    ``v[parent[root]]`` -- reads the *last* node of the array under NumPy's
+    negative indexing and returns a plausible number rather than failing.
+
+    Parameters
+    ----------
+    tree : Tree
+    node : int
+        Where to start. Usually a terminal, from
+        :func:`~pynetrees.T_tree`.
+
+    Returns
+    -------
+    np.ndarray
+        Node indices, starting at ``node`` and ending at the root.
+
+    Examples
+    --------
+    The second-longest terminal path, root-ward::
+
+        plen = Pvec_tree(tree, len_tree(tree))
+        tips = np.flatnonzero(T_tree(tree))
+        chain = path_to_root(tree, tips[np.argsort(plen[tips])[-2]])
+
+    See Also
+    --------
+    ipar_tree : the same chains for every node at once, ``-1``-padded.
+    """
+    node = int(node)
+    if not 0 <= node < tree.n_nodes:
+        raise IndexError(
+            f"path_to_root: node {node} is out of range for a "
+            f"{tree.n_nodes}-node tree"
+        )
+    idpar = idpar_tree(tree, root_self=False)
+    chain = [node]
+    while idpar[chain[-1]] != NO_PARENT:
+        chain.append(int(idpar[chain[-1]]))
+        if len(chain) > tree.n_nodes:
+            raise ValueError(
+                f"path_to_root: the parent chain from node {node} is longer "
+                f"than the tree has nodes, so `dA` contains a cycle; run "
+                f"ver_tree(tree) to see what else is wrong with it"
+            )
+    return np.array(chain, dtype=int)
+
+
 @empty_safe("nodes", dtype=int)
 def BO_tree(tree: Tree) -> np.ndarray:
     """Branch order of each node: how many branch points lie between it and
@@ -614,16 +689,9 @@ def redirect_tree(
         (np.ones(len(rows)), (rows, cols)), shape=(N, N)
     ).tocsr()
 
-    new_tree = Tree(
-        dA=dA_new,
-        X=tree.X[order_arr],
-        Y=tree.Y[order_arr],
-        Z=tree.Z[order_arr],
-        D=tree.D[order_arr],
-        R=tree.R[order_arr],
-        rnames=tree.rnames,
-        name=tree.name if name is None else name,
-    )
+    # a pure permutation of the same nodes, so `reindexed` moves every
+    # per-node field with them; only the rewired adjacency is replaced
+    new_tree = tree.reindexed(order_arr, name=name).copy(dA=dA_new)
     return RedirectResult(new_tree, order_arr) if full_output else new_tree
 
 
@@ -900,7 +968,7 @@ def asym_tree(
 
 
 class SectionResult(NamedTuple):
-    """Result of :func:`dissect_tree` with ``with_positions=True``."""
+    """Result of :func:`dissect_tree` with ``full_output=True``."""
 
     sections: np.ndarray
     """``(n_sections, 2)`` array of ``(start_node, end_node)``."""
@@ -912,7 +980,7 @@ class SectionResult(NamedTuple):
 @accepts_population
 @empty_safe("pairs", dtype=int)
 def dissect_tree(tree: Tree, by_region: bool = True, *,
-                 with_positions: bool = False):
+                 full_output: bool = False):
     """Group nodes into sections delimited by branch points, termination
     points, and (optionally) region changes.
 
@@ -969,7 +1037,7 @@ def dissect_tree(tree: Tree, by_region: bool = True, *,
         starts.append(node)
         ends.append(end)
     sections = np.array(list(zip(starts, ends)), dtype=int).reshape(-1, 2)
-    if not with_positions:
+    if not full_output:
         return sections
 
     # Per-node (section index, relative position along it). This is what

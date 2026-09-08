@@ -1,6 +1,6 @@
 """The remaining MATLAB options ported in W3.
 
-`ipar_tree(terminals_only=)`, `dissect_tree(with_positions=)` and
+`ipar_tree(terminals_only=)`, `dissect_tree(full_output=)` and
 `soma_tree(overlap_correction=)`. Where a MATLAB reference exists it was
 produced by running the source in Octave 11; where it does not, the reason
 is recorded in `MATLAB_TOOLBOX_BUGS.md`.
@@ -69,14 +69,14 @@ def test_nodes_argument_selects_terminals():
 
 
 # ---------------------------------------------------------------------------
-# dissect_tree(with_positions=True)  -- MATLAB's second output
+# dissect_tree(full_output=True)  -- MATLAB's second output
 # ---------------------------------------------------------------------------
 
 
-def test_with_positions_returns_sections_and_positions():
+def test_full_output_returns_sections_and_positions():
     tree = pt.sample_tree()
     plain = pt.dissect_tree(tree)
-    result = pt.dissect_tree(tree, with_positions=True)
+    result = pt.dissect_tree(tree, full_output=True)
 
     np.testing.assert_array_equal(result.sections, plain)
     assert result.positions.shape == (tree.n_nodes, 2)
@@ -89,13 +89,13 @@ def test_section_count_matches_matlab():
 
 def test_every_node_is_assigned_to_a_section():
     tree = pt.sample_tree()
-    _, positions = pt.dissect_tree(tree, with_positions=True)
+    _, positions = pt.dissect_tree(tree, full_output=True)
     assert (positions[:, 0] >= 0).all()
 
 
 def test_relative_position_runs_zero_to_one_within_each_section():
     tree = pt.sample_tree()
-    sections, positions = pt.dissect_tree(tree, with_positions=True)
+    sections, positions = pt.dissect_tree(tree, full_output=True)
     assert positions[:, 1].min() >= 0.0
     assert positions[:, 1].max() <= 1.0
     # Each section *owns* its end node, at fraction 1.0. It does not own its
@@ -116,7 +116,7 @@ def test_relative_position_runs_zero_to_one_within_each_section():
 def test_positions_are_what_neuron_needs_to_place_a_synapse():
     """`(section, fraction along it)` is exactly NEURON's `sec(x)` addressing."""
     tree = pt.sample_tree()
-    sections, positions = pt.dissect_tree(tree, with_positions=True)
+    sections, positions = pt.dissect_tree(tree, full_output=True)
     node = tree.n_nodes // 2
     section_index, fraction = positions[node]
     assert 0 <= section_index < len(sections)

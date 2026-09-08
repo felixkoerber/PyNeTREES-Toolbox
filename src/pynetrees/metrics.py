@@ -468,7 +468,7 @@ def scale_tree(
         X, Y, Z = X * fac[0], Y * fac[0], Z * fac[0]
         D = tree.D * fac[0] if scale_diameter else tree.D
 
-    return tree.with_coords(X=X + ox, Y=Y + oy, Z=Z + oz, D=D)
+    return tree.copy(X=X + ox, Y=Y + oy, Z=Z + oz, D=D)
 
 
 @accepts_population
@@ -509,7 +509,7 @@ def tran_tree(tree: Tree, offset=None) -> Tree:
             offset = np.append(offset, 0.0)
         dx, dy, dz = offset
 
-    return tree.with_coords(X=tree.X + dx, Y=tree.Y + dy, Z=tree.Z + dz)
+    return tree.copy(X=tree.X + dx, Y=tree.Y + dy, Z=tree.Z + dz)
 
 
 def _rotation_matrix(degx, degy, degz, hand: str = "right") -> np.ndarray:
@@ -572,7 +572,7 @@ def _rotate_pca(tree: Tree, mode: str) -> Tree:
     coeff = coeff * np.sign(coeff[dominant, np.arange(coeff.shape[1])])
     scores = centred @ coeff
     ix, iy, iz = _PCA_AXIS_ORDER[mode]
-    return tree.with_coords(X=scores[:, ix], Y=scores[:, iy], Z=scores[:, iz])
+    return tree.copy(X=scores[:, ix], Y=scores[:, iy], Z=scores[:, iz])
 
 
 def _mean_axis_nodes(tree: Tree, nodes, exclude_regions) -> np.ndarray:
@@ -764,13 +764,13 @@ def rot_tree(tree: Tree, deg=(0.0, 0.0, 90.0), mode: str | None = None, *,
         RM = np.array([[np.cos(theta), -np.sin(theta)],
                        [np.sin(theta), np.cos(theta)]])
         XY = np.stack([tree.X, tree.Y], axis=1) @ RM
-        return tree.with_coords(X=XY[:, 0], Y=XY[:, 1])
+        return tree.copy(X=XY[:, 0], Y=XY[:, 1])
 
     if deg.size == 2:
         deg = np.append(deg, 0.0)
     RM = _rotation_matrix(*np.radians(deg))
     XYZ = np.stack([tree.X, tree.Y, tree.Z], axis=1) @ RM
-    return tree.with_coords(X=XYZ[:, 0], Y=XYZ[:, 1], Z=XYZ[:, 2])
+    return tree.copy(X=XYZ[:, 0], Y=XYZ[:, 1], Z=XYZ[:, 2])
 
 @accepts_population
 @empty_safe("tree")
@@ -794,11 +794,11 @@ def flip_tree(tree: Tree, axis: str = "x") -> Tree:
     """
     root = tree.root
     if axis == "x":
-        return tree.with_coords(X=2 * tree.X[root] - tree.X)
+        return tree.copy(X=2 * tree.X[root] - tree.X)
     if axis == "y":
-        return tree.with_coords(Y=2 * tree.Y[root] - tree.Y)
+        return tree.copy(Y=2 * tree.Y[root] - tree.Y)
     if axis == "z":
-        return tree.with_coords(Z=2 * tree.Z[root] - tree.Z)
+        return tree.copy(Z=2 * tree.Z[root] - tree.Z)
     raise ValueError(f"axis must be 'x', 'y', or 'z', got {axis!r}")
 
 
@@ -815,9 +815,9 @@ def flatten_tree(tree: Tree) -> Tree:
     extent, exactly as the 3D segment length is preserved in 2D)."""
     idpar = idpar_tree(tree)
     blocks = _subtree_blocks(tree.dA)
-    tree = tree.with_coords(Z=tree.Z - tree.Z[tree.root])
+    tree = tree.copy(Z=tree.Z - tree.Z[tree.root])
     if np.all(np.abs(tree.Z) < 1e-3):
-        return tree.with_coords(Z=np.zeros_like(tree.Z))
+        return tree.copy(Z=np.zeros_like(tree.Z))
 
     X, Y, Z = tree.X.copy(), tree.Y.copy(), tree.Z.copy()
     for node in range(1, tree.n_nodes):
@@ -835,7 +835,7 @@ def flatten_tree(tree: Tree) -> Tree:
         Z[idx] -= dZ
         Z[node] = 0.0
 
-    return tree.with_coords(X=X, Y=Y, Z=Z)
+    return tree.copy(X=X, Y=Y, Z=Z)
 
 
 @accepts_population(paired="v")
@@ -852,12 +852,12 @@ def morph_tree(tree: Tree, v: np.ndarray | None = None) -> Tree:
     idpar = idpar_tree(tree)
     blocks = _subtree_blocks(tree.dA)
     # Remember where the root was, work relative to it, then put it back at
-    # the end. `with_coords` does the shift directly -- going through
+    # the end. `copy` does the shift directly -- going through
     # `tran_tree` only to apply an offset we have already computed cost an
     # extra Tree allocation and a module-level dependency for nothing.
     root = tree.root
     x0, y0, z0 = tree.X[root], tree.Y[root], tree.Z[root]
-    tree = tree.with_coords(X=tree.X - x0, Y=tree.Y - y0, Z=tree.Z - z0)
+    tree = tree.copy(X=tree.X - x0, Y=tree.Y - y0, Z=tree.Z - z0)
     length = len_tree(tree)
 
     X, Y, Z = tree.X.copy(), tree.Y.copy(), tree.Z.copy()
@@ -877,8 +877,8 @@ def morph_tree(tree: Tree, v: np.ndarray | None = None) -> Tree:
         Y[idx] += -dY + v[node] * (dY / xyz)
         Z[idx] += -dZ + v[node] * (dZ / xyz)
 
-    result = tree.with_coords(X=X, Y=Y, Z=Z)
-    return result.with_coords(X=result.X + x0, Y=result.Y + y0, Z=result.Z + z0)
+    result = tree.copy(X=X, Y=Y, Z=Z)
+    return result.copy(X=result.X + x0, Y=result.Y + y0, Z=result.Z + z0)
 
 
 @accepts_population
@@ -898,7 +898,7 @@ def zcorr_tree(tree: Tree, tz: float = 5.0):
         mask = sub_tree(tree, int(node), with_tree=False).mask
         Z[mask] += dZ[node]
 
-    return tree.with_coords(Z=Z), jumped
+    return tree.copy(Z=Z), jumped
 
 
 # ---------------------------------------------------------------------------

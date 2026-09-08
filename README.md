@@ -304,15 +304,18 @@ resonance, bAP) is not — those are thin wrappers over this layer.
 
 Work in progress, and honest about it. [PORT_STATUS.md](PORT_STATUS.md) tracks every
 MATLAB function with a status of `done` / `deferred` / `wont-port` and a reason, plus
-a dated design-decisions log.
+a dated design-decisions log. [CHANGELOG.md](CHANGELOG.md) summarises each release,
+and [REVIEW_ROADMAP.md](REVIEW_ROADMAP.md) is what is left from the running code
+review, ordered and assessed.
 
 **Ported:** core data structure, I/O (SWC, NeuroLucida, MATLAB `.mtr`/`.mat`, `.neu`,
 `.nmf`, NeuroML, `.hoc`), graph theory, metrics, editing, construction (including
 `growth_tree`'s space-filling growth), the generative pipeline (`clone_tree`,
 `gscale_tree`, `dscam_tree`, `spines_tree`), density/hull/space-filling machinery,
 a topological (persistent-homology) description of morphology, electrotonics,
-statistics, image-stack loading and diameter fitting, native Blender export, and a
-foundational NEURON integration. Every exported function accepts a population
+statistics, image-stack loading and diameter fitting, native Blender export, a
+foundational NEURON integration, and the Beining et al. (2017) granule-cell model
+(`GC_init`, with its biophysics table, morphologies and `.mod` sources bundled). Every exported function accepts a population
 (a list of trees) as well as a single one, and handles a tree with no nodes as a
 value rather than an error. See [NOT_YET_PORTED.md](NOT_YET_PORTED.md) for the
 complete, itemised inventory.

@@ -75,6 +75,13 @@ SECTIONS = [
      "Loading, skeletonising and diameter-fitting confocal/2-photon stacks."),
     ("pynetrees.neuron_bridge", "NEURON simulation",
      "Requires the `neuron` package."),
+    ("pynetrees._optional", "Optional dependencies",
+     "Reporting what an installation cannot do, up front."),
+    ("pynetrees.gc_model", "Granule-cell model",
+     "The Beining et al. (2017) granule cell: `GC_initModel.m` as one "
+     "adjustable function. Resolving a specification needs nothing but "
+     "Python; building a model from it needs the `neuron` package and the "
+     "model's compiled `.mod` library."),
 ]
 
 BLENDER_SECTION = ("pynetrees.blender", "Blender export (optional)",
