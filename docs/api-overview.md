@@ -19,10 +19,7 @@ package, so it cannot drift from what's actually importable.
 | `Tree` | The morphology container (`dA`, `X`, `Y`, `Z`, `D`, `R`, `rnames`, `name`, `frustum`, `Ri`, `Gm`, `Cm`, `meta`) |
 | `Tree.meta` | Ad-hoc caller-owned data; length-`n_nodes` entries follow the nodes through every transform |
 | `Tree.total_length` / `.total_surface` / `.total_volume` | Whole-tree sums, without spelling out `len_tree(tree).sum()` |
-| `Tree.region_nodes(*names)` | Indices of nodes in the named region(s) |
-| `Tree.region_mask(*names)` | Same, as a boolean mask |
-| `Tree.region_index(name)` | The `R` value for a region name |
-| `Tree.validate(quiet=False)` | Structural check; returns a list of problems |
+| `Tree.region_nodes(*names)` | Boolean mask of the nodes in the named region(s) |
 | `Tree.reindexed(order)` | New tree with nodes reordered/subset |
 | `Tree.copy(**fields)` | Copy with the named fields replaced (everything else carried over) |
 | `ver_tree(tree)` | Free-function form of `validate` |
@@ -41,6 +38,9 @@ package, so it cannot drift from what's actually importable.
 | `load_nmf` / `save_nmf` | The toolbox's HDF5 extended-SWC `.nmf` |
 | `save_neuroml` | NeuroML `.xml` (export only) |
 | `save_hoc` / `save_nrn` | NEURON `.hoc` cell file / one-section-per-segment `.nrn` (export only) |
+| `save_x3d` | X3D scene — cylinders as XML, viewable in a browser (export only) |
+| `save_pov` | POV-Ray scene — geometry plus a `sh<name>.pov` to render it (export only) |
+| `POV_STYLES` | The scene presets `save_pov` can write: `plain`, `fluorescence`, `coral` |
 | `t2n_interface` | T2N-style per-node section/segment index array, for hand-rolled `.hoc` work |
 | `load_npz` / `save_npz` | pynetrees' own lossless native format — the only one that round-trips every `Tree` field |
 | `sample_tree()` | MATLAB's sample: 197-node subtree of an HSN cell |
@@ -236,6 +236,7 @@ Requires the `neuron` package — see [guide.md](guide.md#simulating-with-neuron
 | `NeuronModel.region_sections` | Sections grouped by region name |
 | `insert_mechanism` | Insert a mechanism, by region and/or node index; a parameter may be `f(distance)` |
 | `run_current_clamp` | Inject a current step, record voltage |
+| `save_model_hoc` | The **built** model — sections, mechanisms, every parameter value — as a self-contained `.hoc` for plain `nrniv` |
 
 ### The Beining et al. (2017) granule cell
 

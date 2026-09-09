@@ -16,6 +16,199 @@ is left, per MATLAB file) and [MATLAB_TOOLBOX_BUGS.md](MATLAB_TOOLBOX_BUGS.md)
 
 ---
 
+## 0.3.0 — 2026-09-09
+
+Round 5 of the review, plus a diff against the 2026 TREES release. **991
+tests pass, 17 skip** in the main environment; a second environment with
+Blender runs 963 with 16 skips (see *Blender* below). 0.2.0 was 932.
+
+### The 2026 TREES release, diffed
+
+The upstream release differs from the reference this port was written
+against in **exactly four files** — and two of them change what "correct"
+means here.
+
+| File | Change | What it meant for the port |
+|---|---|---|
+| `convexity_tree.m` | `boundary(X,Y,Z,0)` → `,1)`, and `c = 1 - nnz(Inds)/…` → `c = nnz(Inds)/…` | **Both defects this port documented and refused to reproduce are now fixed upstream.** The deviation is history; the docstring says so. |
+| `dissectSholl_tree.m` | the `if rmax > 500; sf = 2; end` block deleted | The port reproduced that fudge behind `scale_factor=`. Upstream abandoned it, so **the default is now `1.0` on both branches**. Pass `scale_factor=2.0` for a pre-2026 number. |
+| `LIF_tree.m` | `'-t'` sigmoid commented out; the `if pars.e` guard round the progress print commented out too | Feature disabled upstream and the print made unconditional. The port keeps both as options. |
+| `histax.m` | `xax(:)'` orientation fix | Cosmetic. |
+
+**A new upstream bug fell out of the second one.** Deleting the 500 µm block
+also deleted `rmax = max (eucs (:))`, which the **3D** branch still reads.
+`rmax` now exists only inside the mutually exclusive `dim2` branch, and
+`dim3` defaults to `true` — so `dissectSholl_tree` raises on its own default
+path. Recorded as 1.11 in `MATLAB_TOOLBOX_BUGS.md`, along with 1.12 for the
+two `convexity_tree` fixes. The port is unaffected: it builds `radii` the
+same way in both branches.
+
+### Added — POV-Ray and X3D export
+
+The last two unported IO functions.
+
+- **`save_x3d`** (`IO/x3d_tree.m`) — cylinders as XML, which browsers render
+  with no plugin and Blender/MeshLab/ParaView import. `spheres=True` closes
+  the joints at sharp branch points; `offset=` lays several cells out in one
+  scene; `diameters='thin'/'thick'` for visibility in a wide view. The
+  rotation carrying X3D's Y-up cylinder onto each segment is computed with
+  the degenerate cases handled *before* the `arccos` rather than patched
+  after it.
+- **`save_pov`** (`IO/pov_tree.m`) — a `#declare`d union of cylinders, plus a
+  `sh<name>.pov` scene that includes it and adds camera, lights and
+  background, in one of three styles (`plain`, `fluorescence`, `coral`).
+  `blob=True` (MATLAB's default) fuses the cylinders into one smooth
+  implicit surface.
+
+  Colour-coding is written **into each cylinder**. MATLAB writes the colours
+  to a side-car `.dat` and has POV-Ray `#read` them back positionally while
+  parsing, which makes the `.pov` unrenderable alone and the pairing
+  fragile: lose the `.dat`, or edit one cylinder out, and every subsequent
+  colour is off by one.
+
+Neither reproduces MATLAB's `'->'` option, which calls `winopen` on the
+result: a save function should not start programs.
+
+### Added — `save_model_hoc`: the built model, not just the morphology
+
+`save_hoc` writes a morphology. This writes **everything that was done to
+it** — segment counts, `Ra`, `cm`, every inserted mechanism and every
+parameter value it currently holds, including ones that vary along the cell
+— so a model assembled with `build_neuron_model` / `GC_init` /
+`insert_mechanism` can be handed to plain `nrniv`, to a collaborator who
+does not use Python, or to a cluster job.
+
+The state is read back **from the live sections**, not re-derived from
+whatever built it. A density set by a callable gradient, a value poked in by
+hand, a mechanism inserted from the console — all of it is in the sections,
+so all of it comes out. Verified by loading the file into a *fresh* NEURON
+and comparing: identical section count, segment count, lengths, `Ra`, `cm`,
+`g_pas` and the per-segment gradient.
+
+Only settable PARAMETERs are written. `psection()` also reports a
+mechanism's STATEs (`m`, `h`, `n`) and ASSIGNEDs (`ina`, `gk`); writing
+those would be writing down the middle of a simulation and calling it a
+model. A uniform value collapses to one line per section, so the file stays
+readable and only real gradients are per-segment. The whole granule cell
+comes out as 4750 lines with all 16 channels correctly distributed per
+region.
+
+What a section cannot be asked about — recording vectors, `NetStim`/`NetCon`
+wiring, `h.` globals — is named in a comment block at the end of the file,
+rather than quietly producing a model that runs and is not yours.
+
+### Added — `Tree.meta` round-trips through MATLAB
+
+No v7.3 needed, and no new container: MATLAB's TREES already hangs ad-hoc
+data straight off the tree struct — `tree.col`, `tree.NID`,
+`tree.Rho_soma`, `tree.jpoints` — which is exactly what `meta` is for. The
+two are now the same thing:
+
+- loading, every field that is not part of the `Tree` model lands in
+  `tree.meta` under its own name;
+- saving, every `meta` entry is written back as a **top-level** field.
+
+Flat rather than nested on purpose. A nested `meta` struct would round-trip
+just as well and be invisible to every MATLAB function that reads `tree.col`
+by name.
+
+This turned up that **the bundled granule cells carry `NID`
+(`cell_SH07all2_1`, T2N's hoc identifier) and `col`** — both of which the
+loader had been dropping since `.mtr` support landed. A key colliding with a
+real `Tree` field is refused rather than silently winning or losing; a value
+`savemat` cannot encode is dropped with a warning.
+
+### Changed — `Tree` has one region accessor
+
+`region_mask()` is now **`region_nodes()`**, returning the boolean mask;
+the old `region_nodes()` (indices) and `region_index()` are gone, as is
+`Tree.validate()` (`ver_tree(tree)` was always the same thing).
+
+A mask because that is what the surrounding code wants: it composes with
+`&`/`|`/`~`, indexes the per-node arrays directly, and lines up element-wise
+with `B_tree`/`T_tree`/`len_tree`. `np.flatnonzero(...)` gives indices where
+they are genuinely wanted, and is explicit about it.
+
+**This changes the meaning of existing calls rather than breaking them
+loudly**: `tree.region_nodes("soma")[0]` used to be the first somatic node
+and is now a bool. Every call site in the package, tests, notebooks and docs
+was updated.
+
+### Changed — ragged populations are valid
+
+`[tree, [tree, tree]]` — one cell beside a group of two — now returns
+`[value, [value, value]]`. 0.2.0 refused it on the theory that it might be a
+typo; that was wrong. A rule which maps element to element cannot be
+confused by its input, and refusing a valid structure to guard against a
+hypothetical mistake made the common case worse. An element that is neither
+a tree nor a list is still refused, because that one really has no per-tree
+meaning.
+
+### Changed — other API consistency
+
+| Was | Is |
+|---|---|
+| `resample_tree(method="matlab")` | `method="default"` — every function here reproduces MATLAB unless it says otherwise, so naming one option after that distinguishes nothing. What distinguishes the alternative is what it preserves, hence `"anchors"`. |
+| `ShollResult` (dataclass) | a `NamedTuple`, so it unpacks in MATLAB's own order like every other multi-output result here |
+
+`plot_mpl_tree`, `dA_tree`, the integer `dim` convention and the absence of
+deprecation shims were all already correct from 0.1.4's V1 cleanup; the
+review items covering them needed no work.
+
+### Added — `insert_tree` takes an SWC matrix
+
+`insert_tree(tree, swc)` with MATLAB's `[inode R X Y Z D idpar]`, passed
+positionally the way MATLAB does it — a 2-D array in the `X` slot cannot
+mean anything else. A 5-column `[R X Y Z D]` form hangs everything off the
+root.
+
+Column 6 is a **diameter**, not a radius. The layout is identical to a
+standard `.swc` file, where that column *is* a radius, so feeding raw SWC
+rows in would silently halve every diameter; `radius=True` doubles it for
+you. MATLAB shouts the same warning in its docstring. A region index the
+tree has no name for is refused rather than inserted — an out-of-range `R`
+is exactly what `ver_tree` flags.
+
+Called with nothing to insert, the tree comes back unchanged, which is what
+MATLAB does (`if ~isempty (pars.swc)` guards its whole body).
+
+### Blender is part of the standard install
+
+`bpy` is now in the `all` extra, and a second environment
+(`.venv-blender`, gitignored) confirms it works: **all 17 previously-skipped
+Blender tests pass**, and the whole suite runs green on numpy 1.26 with
+bpy 5.0.1. `pynetrees.blender` was never broken — only untestable.
+
+The cost is real and is now stated where it is decided rather than in a
+footnote: `bpy` requires **numpy < 2 and CPython 3.11**, so `all` holds the
+whole environment there. **`all-no-blender`** is the identical set without
+it, for numpy 2 or Python 3.12+.
+
+### `soma_tree`: `maxD` and `l` are independent
+
+Checked against the source rather than assumed. MATLAB does **not** tie them
+together — `l` only *defaults* to `1.5 * maxD`. Its note *"recently corrected
+to match maxD and l"* means the profile now *attains* both: the superseded
+formula `maxD/4 * cos(pi*Plen/(l/2)) + maxD/4` peaked at `maxD/2` and ran a
+full cosine period inside the selected region, so neither requested number
+came out. The current `maxD * cos(pi*Plen/l)` reaches exactly `maxD` at the
+root and zero at `l/2`.
+
+This port already implemented the corrected formula. The docstring said
+"(approximate) target diameter", which undersold it; it now states the
+independence and has tests for it.
+
+### Added — `docs/sentinel-options.md`
+
+An evaluation, not a change. `-1` serves three different jobs — "no parent",
+padding in `ipar_tree`/`idchild_tree`, and a NaN stand-in in integer arrays —
+and it is a **valid NumPy index**, so a missing value silently becomes the
+last element. Five options are compared (guardrails, masked arrays, `np.nan`
+floats, a non-indexable sentinel, splitting the roles) with a
+recommendation and a note on what would change it.
+
+---
+
 ## 0.2.0 — 2026-09-08
 
 Answers the third round of `PyNeTREES code review.md`. Four latent bugs were

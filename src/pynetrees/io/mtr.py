@@ -10,14 +10,34 @@ Both MATLAB on-disk formats are handled: v5/v7 via `scipy.io`, and v7.3
 for why that particular library, and why it matters (MATLAB's `save_tree`
 writes v7.3 unconditionally).
 
-Extra struct fields the MATLAB side sometimes carries (`col`, `NID`,
-`jpoints`, `Rho_soma`, `Rho_AIS`, ...) are outside this port's `Tree` model
-and are dropped; `Ri`/`Gm`/`Cm` *are* read, since Phase 8 gave `Tree` real
-homes for them.
+Ad-hoc struct fields and `Tree.meta`
+------------------------------------
+
+MATLAB's TREES hangs extra data straight off the tree struct -- `tree.col`,
+`tree.NID`, `tree.Rho_soma`, `tree.jpoints` -- and the bundled granule-cell
+scripts rely on several of them. Those are exactly what `Tree.meta` is for,
+so the two are the same thing and are mapped onto each other:
+
+- **loading**, every field that is not part of the `Tree` model itself
+  (`dA`, `X`, `Y`, `Z`, `D`, `R`, `rnames`, `name`, `frustum`, `Ri`, `Gm`,
+  `Cm`) lands in `tree.meta` under its own name;
+- **saving**, every `meta` entry is written back as a top-level field.
+
+So a tree read from MATLAB, edited here and written back keeps its `NID` and
+its colour, and a Python annotation added to `meta` shows up in MATLAB as
+`tree.myfield` where the toolbox's own functions can see it. This is why
+`meta` is a **flat** namespace rather than a nested struct: a nested one
+would round-trip just as well but would be invisible to every MATLAB
+function that expects `tree.col`.
+
+`Ri`/`Gm`/`Cm` are read into their own attributes rather than into `meta`,
+since Phase 8 gave `Tree` real homes for them.
 """
 
 from __future__ import annotations
 
+import io
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -145,6 +165,15 @@ def _scalar_or_array(value):
     return float(arr[0]) if arr.size == 1 else arr
 
 
+#: Struct fields the :class:`~pynetrees.Tree` model has its own homes for.
+#: Everything else in a MATLAB tree struct is ad-hoc data and goes to
+#: :attr:`~pynetrees.Tree.meta`.
+_TREE_FIELDS = frozenset({
+    "dA", "X", "Y", "Z", "D", "R", "rnames", "name", "frustum",
+    "Ri", "Gm", "Cm",
+})
+
+
 def _struct_to_tree(struct: dict, name: str) -> Tree:
     """Build a :class:`~pynetrees.Tree` from one decoded MATLAB tree struct."""
     if "dA" not in struct or "X" not in struct:
@@ -172,6 +201,10 @@ def _struct_to_tree(struct: dict, name: str) -> Tree:
         Ri=_scalar_or_array(struct.get("Ri")),
         Gm=_scalar_or_array(struct.get("Gm")),
         Cm=_scalar_or_array(struct.get("Cm")),
+        # `col`, `NID`, `Rho_soma`, ... -- MATLAB's own ad-hoc fields, which
+        # used to be dropped on the floor here
+        meta={key: value for key, value in struct.items()
+              if key not in _TREE_FIELDS and not key.startswith("__")},
     )
 
 
@@ -244,4 +277,57 @@ def _tree_to_struct(tree: Tree) -> dict:
         value = getattr(tree, field, None)
         if value is not None:
             struct[field] = value
+    struct.update(_meta_fields(tree))
     return struct
+
+
+def _meta_fields(tree: Tree) -> dict:
+    """``Tree.meta`` as top-level MATLAB struct fields.
+
+    Flat rather than nested, because that is where MATLAB's own toolbox
+    looks: ``tree.col`` and ``tree.NID`` are read by name by several TREES
+    functions, and burying them one level down would round-trip perfectly
+    while being invisible to every one of them.
+
+    A key that collides with a real ``Tree`` field is refused rather than
+    silently winning or silently losing -- ``meta['X'] = ...`` would
+    otherwise either corrupt the morphology or vanish, depending on dict
+    ordering, and neither is something to discover later.
+
+    A value ``savemat`` cannot encode is dropped with a warning, matching
+    what ``save_npz`` does: losing an annotation quietly is worse than
+    saying so, and refusing to write the file at all would make ``meta`` a
+    liability.
+    """
+    from scipy.io import savemat
+
+    collisions = sorted(set(tree.meta) & _TREE_FIELDS)
+    if collisions:
+        raise ValueError(
+            f"tree {tree.name!r}: meta key(s) {collisions} collide with the "
+            f"tree struct's own fields. MATLAB has one flat namespace per "
+            f"struct, so these cannot both be written -- rename them."
+        )
+
+    fields = {}
+    for key, value in tree.meta.items():
+        if not key.isidentifier():
+            warnings.warn(
+                f"tree {tree.name!r}: meta[{key!r}] is not a valid MATLAB "
+                f"field name, so it cannot be written to .mtr; dropping it.",
+                stacklevel=4,
+            )
+            continue
+        try:
+            savemat(io.BytesIO(), {key: value})
+        except Exception:  # noqa: BLE001 - savemat raises several types
+            warnings.warn(
+                f"tree {tree.name!r}: meta[{key!r}] is a "
+                f"{type(value).__name__}, which .mtr cannot store; dropping "
+                f"it. Convert it to an array, string, number or dict to keep "
+                f"it.",
+                stacklevel=4,
+            )
+            continue
+        fields[key] = value
+    return fields

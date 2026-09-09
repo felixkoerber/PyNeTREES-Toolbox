@@ -208,43 +208,41 @@ class Tree:
 
         return float(vol_tree(self).sum())
 
-    def validate(self, quiet: bool = False) -> list[str]:
-        """Convenience wrapper around :func:`ver_tree`."""
-        return ver_tree(self, quiet=quiet)
-
-    def region_index(self, name: str) -> int:
-        """The ``R`` value for region ``name``.
-
-        Raises :class:`KeyError` naming the available regions if ``name``
-        isn't one of them -- MATLAB's equivalent
-        (``find(strcmp(tree.rnames, name))``) silently returns empty, which
-        then makes the *next* line's comparison quietly match nothing
-        instead of failing.
-        """
-        try:
-            return self.rnames.index(name)
-        except ValueError:
-            raise KeyError(
-                f"no region {name!r} in tree {self.name!r}; "
-                f"available regions: {self.rnames}"
-            ) from None
-
-    def region_mask(self, *names: str) -> np.ndarray:
-        """Boolean mask of nodes belonging to any of ``names``."""
-        wanted = [self.region_index(n) for n in names]
-        return np.isin(self.R, wanted)
-
     def region_nodes(self, *names: str) -> np.ndarray:
-        """Indices of nodes belonging to any of ``names``.
+        """Boolean mask of the nodes belonging to any of ``names``.
 
         Replaces the MATLAB idiom
-        ``find(tree.R == find(strcmp(tree.rnames, 'soma')))``, which appears
-        dozens of times across the bundled GC model scripts::
+        ``tree.R == find (strcmp (tree.rnames, 'soma'))``, which appears
+        dozens of times across the bundled granule-cell scripts::
 
             soma = tree.region_nodes("soma")
             dend = tree.region_nodes("adendIML", "adendMML", "adendOML")
+
+        A **mask**, not indices, because that is what the surrounding code
+        wants: it combines with ``&``/``|``/``~``, it indexes ``X``/``D``/
+        ``R`` directly, and it lines up element-wise with everything else
+        the toolbox returns per node (``B_tree``, ``T_tree``,
+        ``len_tree``). Wrap it in :func:`numpy.flatnonzero` for indices when
+        you actually need them -- which is rarer than it looks, and explicit
+        when it happens::
+
+            first_soma_node = int(np.flatnonzero(tree.region_nodes("soma"))[0])
+
+        Raises :class:`KeyError` naming the available regions if a name is
+        not one of them. MATLAB's ``find (strcmp (...))`` returns empty
+        instead, which makes the *next* line's comparison quietly match
+        nothing rather than failing.
         """
-        return np.flatnonzero(self.region_mask(*names))
+        wanted = []
+        for name in names:
+            try:
+                wanted.append(self.rnames.index(name))
+            except ValueError:
+                raise KeyError(
+                    f"no region {name!r} in tree {self.name!r}; "
+                    f"available regions: {self.rnames}"
+                ) from None
+        return np.isin(self.R, wanted)
 
     def reindexed(self, order, name: str | None = None) -> "Tree":
         """Return a new Tree with nodes reordered/subset per ``order``.

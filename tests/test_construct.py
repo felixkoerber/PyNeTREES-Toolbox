@@ -10,6 +10,7 @@ that unit tests on tiny trees wouldn't).
 """
 
 import numpy as np
+import pynetrees as pt
 import pytest
 from scipy import sparse
 
@@ -320,3 +321,38 @@ def test_quadfit_tree_returns_reasonable_fit():
     assert np.isfinite(scale) and np.isfinite(offset)
     assert fitted.n_nodes == tree.n_nodes
     assert ver_tree(fitted, quiet=True) == []
+
+
+def test_soma_tree_attains_maxD_and_length_independently():
+    """MATLAB's docstring says the function "was recently corrected to match
+    maxD and l", which reads as though the two were tied together. They are
+    not: the correction was that the profile now actually *attains* both.
+    The superseded formula peaked at maxD/2 and ran a full cosine period
+    inside the region, so neither requested number came out."""
+    base = pt.resample_tree(pt.sample_tree(), 1.0)
+
+    for maxD, length in [(30.0, 20.0), (30.0, 90.0), (10.0, 45.0), (50.0, 45.0)]:
+        soma = pt.soma_tree(base, maxD, length)
+        plen = pt.Pvec_tree(soma)
+        touched = plen < length / 2
+
+        # peak is maxD itself, not maxD/2
+        assert soma.D[touched].max() == pytest.approx(maxD)
+        # and the extent follows `length`, whatever maxD is
+        assert plen[touched].max() < length / 2
+        assert plen[touched].max() > length / 2 - 2.0
+
+
+def test_soma_tree_length_defaults_to_one_and_a_half_maxD():
+    base = pt.resample_tree(pt.sample_tree(), 1.0)
+    implied = pt.soma_tree(base, 30.0)
+    explicit = pt.soma_tree(base, 30.0, 45.0)
+    np.testing.assert_allclose(implied.D, explicit.D)
+
+
+def test_soma_tree_never_thins_a_node_that_is_already_thicker():
+    """The cosine is a floor, not an overwrite -- MATLAB's
+    `max (tree.D (indy), ...)`."""
+    base = pt.resample_tree(pt.sample_tree(), 1.0)
+    fat = base.copy(D=np.full(base.n_nodes, 100.0))
+    assert pt.soma_tree(fat, 30.0).D.min() == pytest.approx(100.0)

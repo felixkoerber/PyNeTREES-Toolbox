@@ -609,10 +609,10 @@ def soma_tree(
     tree: Tree, maxD: float = 30.0, length: float | None = None,
     tag_region: bool = False, overlap_correction: bool = False,
 ) -> Tree:
-    """Reshape diameter near the root into a cosine soma profile of
-    (approximate) target diameter ``maxD`` and length ``length``
-    (default ``1.5 * maxD``). If ``tag_region``, affected nodes are
-    (re)labeled with a ``"soma"`` region.
+    """Reshape diameter near the root into a cosine soma profile of peak
+    diameter ``maxD`` and axial extent ``length`` (default ``1.5 * maxD``).
+    If ``tag_region``, affected nodes are (re)labeled with a ``"soma"``
+    region.
 
     Parameters
     ----------
@@ -640,6 +640,36 @@ def soma_tree(
     Returns
     -------
     Tree
+
+    Notes
+    -----
+    **``maxD`` and ``length`` are independent.** ``length`` only *defaults*
+    to ``1.5 * maxD``; give both and both are honoured, so a squat soma
+    (``maxD=30, length=20``) and an elongated one (``maxD=30, length=90``)
+    are equally reachable.
+
+    That is worth stating because MATLAB's docstring carries the line
+    *"Note! This function was recently corrected to match maxD and l!"*,
+    which reads as though the two were being tied together. They are not.
+    The correction was to the profile itself: the superseded formula
+
+    .. code-block:: matlab
+
+        maxD / 4 * cos (pi * Plen / (l / 2)) + maxD / 4
+
+    peaks at ``maxD / 2`` rather than ``maxD``, and completes a full cosine
+    period inside the selected region instead of a quarter -- so neither
+    requested number was actually attained. The current formula,
+    ``maxD * cos (pi * Plen / l)`` over the nodes with ``Plen < l / 2``,
+    reaches exactly ``maxD`` at the root and exactly zero at ``l / 2``.
+    "Matching maxD and l" means *attaining* them, not relating them.
+
+    This port implements the corrected formula, and always has.
+
+    The profile is a floor, not an overwrite: a node already thicker than
+    the cosine keeps its own diameter (MATLAB's ``max (tree.D (indy),
+    ...)``), so running this on a tree that already has a soma cannot make
+    it thinner.
     """
     if length is None:
         length = 1.5 * maxD

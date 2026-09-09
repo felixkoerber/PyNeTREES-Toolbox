@@ -43,7 +43,7 @@ from ..edit import root_tree
 from ..graphtheory import dissect_tree, ipar_tree
 from ..metrics import len_tree
 
-__all__ = ["save_hoc", "save_nrn", "t2n_interface"]
+__all__ = ["save_hoc", "save_model_hoc", "save_nrn", "t2n_interface"]
 
 # NEURON's hoc parser refuses procedures beyond a few hundred statements, so
 # both MATLAB and this split the generated topology and geometry procedures
@@ -147,7 +147,8 @@ def _write(path: Path, text: str) -> None:
 `` into ``
 `` -- and since these lines already end in
     ``
-``, that yields ``
+``, that yields ``
+
 `` and a file NEURON reads with a blank
     line between every statement.
     """
@@ -627,3 +628,317 @@ def save_nrn(tree: Tree, path: str | Path, res=None, *,
 
     _write(path, write.text())
     return path
+
+
+# ---------------------------------------------------------------------------
+# a *built* model, not just a morphology
+# ---------------------------------------------------------------------------
+
+
+def _parameter_names(h, mechanism: str) -> list[str]:
+    """The settable PARAMETERs of a mechanism, suffix and all.
+
+    ``psection()`` reports every range variable a mechanism has, which
+    includes its STATEs (``m``, ``h``, ``n``) and ASSIGNEDs (``ina``, ``gk``)
+    -- writing those into a hoc file would be writing down the middle of a
+    simulation and calling it a model. ``MechanismStandard(name, 1)`` is
+    NEURON's own answer to "which of these are inputs".
+    """
+    standard = h.MechanismStandard(mechanism, 1)
+    names = []
+    for index in range(int(standard.count())):
+        reference = h.ref("")
+        standard.name(reference, index)
+        names.append(reference[0])
+    return names
+
+
+def _uniform(values) -> float | None:
+    """The single value shared by every segment, or ``None`` if they differ.
+
+    Worth the check: a uniform parameter is one hoc line per section, and a
+    graded one is a line per segment. Most models are almost entirely
+    uniform, so this is the difference between a readable file and a wall of
+    numbers -- while still writing the gradient exactly where there is one.
+    """
+    values = list(values)
+    first = values[0]
+    return first if all(v == first for v in values) else None
+
+
+def _section_names(model) -> dict[int, str]:
+    """A legal, unique hoc identifier per section.
+
+    NEURON's own ``sec.name()`` is fine already (``sec0``, ``sec1``, ...),
+    but a model built by hand may carry names hoc cannot parse, and two
+    sections may share one. Both are resolved here rather than producing a
+    file that fails at ``load_file``.
+    """
+    names: dict[int, str] = {}
+    used: set[str] = set()
+    for index, section in enumerate(model.sections):
+        base = _hoc_identifier(section.name().split(".")[-1], "", False)
+        candidate = base or f"sec{index}"
+        if candidate in used:
+            candidate = f"{candidate}_{index}"
+        used.add(candidate)
+        names[index] = candidate
+    return names
+
+
+def save_model_hoc(model, path: str | Path, *, stimuli=(), v_init=None,
+                   celsius=None, tstop=None, dt=None,
+                   mech_library: str | Path | None = None) -> Path:
+    """Write a **built** NEURON model out as a self-contained ``.hoc`` file.
+
+    :func:`save_hoc` writes a morphology. This writes the morphology *plus
+    everything that was done to it* -- segment counts, ``Ra``, ``cm``, every
+    inserted mechanism and every parameter value it currently holds,
+    including ones that vary along the cell -- so a model assembled here with
+    :func:`~pynetrees.build_neuron_model`, :func:`~pynetrees.GC_init` and
+    :func:`~pynetrees.insert_mechanism` can be handed to plain ``nrniv``,
+    to a collaborator who does not use Python, or to a cluster job.
+
+    The state is read back **from the live model**, not re-derived from
+    whatever built it. That is the point: a density set by a callable
+    gradient, a value poked in by hand afterwards, a mechanism inserted from
+    the console -- all of it is in the sections, so all of it comes out.
+
+    Parameters
+    ----------
+    model : NeuronModel or GCModel
+        A model built by :func:`~pynetrees.build_neuron_model` or
+        :func:`~pynetrees.GC_init`.
+    path : str or Path
+        ``.hoc`` is appended if missing.
+    stimuli : sequence, optional
+        Point processes to recreate, as ``(kind, node, {attribute: value})``
+        triples -- e.g. ``("IClamp", soma, {"delay": 5, "dur": 100,
+        "amp": 0.09})``. Written as objects attached at the same position
+        the node maps to. Anything NEURON can construct with a segment
+        argument works; nothing is validated beyond the node index, because
+        the set of point processes depends on what is compiled.
+    v_init, celsius, tstop, dt : float, optional
+        Written into the file when given, so the run conditions travel with
+        the model rather than living in whoever's memory. ``celsius``
+        defaults to the value currently set in this process, since it
+        affects every rate constant and forgetting it silently changes the
+        answer.
+    mech_library : str or Path, optional
+        Emit ``nrn_load_dll("...")`` at the top. Needed whenever the model
+        uses mechanisms that are not NEURON's built-ins -- which is every
+        published model, including the bundled granule cell.
+
+    Returns
+    -------
+    Path
+
+    Notes
+    -----
+    **What is not written.** Recording vectors, ``NetStim``/``NetCon``
+    wiring, and anything set through ``h.`` globals rather than on a section
+    are outside what a section can be asked about, so they are not
+    recovered. The file ends with a commented block naming them, rather than
+    quietly producing a model that runs and is not the one you had.
+
+    **Uniform parameters collapse.** A value shared by every segment of a
+    section is written once for the section; only a value that actually
+    varies is written per segment. The result is the same model and a file
+    you can read.
+    """
+    from neuron import h
+
+    path = Path(path)
+    if path.suffix != ".hoc":
+        path = path.with_suffix(path.suffix + ".hoc")
+
+    sections = list(model.sections)
+    names = _section_names(model)
+    write = _Writer()
+
+    write("/*")
+    write(f"{path.stem}: a NEURON model exported by pynetrees.")
+    write("")
+    write(f"{len(sections)} sections, "
+          f"{sum(sec.nseg for sec in sections)} segments, from a "
+          f"{model.tree.n_nodes}-node tree.")
+    write("Morphology, topology, segment counts, passive properties and every")
+    write("inserted mechanism are below, read back from the built model.")
+    write("*/")
+    write("")
+
+    if mech_library is not None:
+        write(f'nrn_load_dll("{Path(mech_library).resolve().as_posix()}")')
+        write("")
+
+    for name in names.values():
+        write(f"create {name}")
+    write("")
+
+    _model_topology(write, model, names)
+    _model_geometry(write, sections, names)
+    _model_biophysics(h, write, sections, names)
+    _model_stimuli(write, model, names, stimuli)
+    _model_run(write, h, v_init, celsius, tstop, dt)
+
+    _write(path, write.text())
+    return path
+
+
+def _model_topology(write: _Writer, model, names: dict[int, str]) -> None:
+    write("proc topol() {")
+    index_of = {id(sec): i for i, sec in enumerate(model.sections)}
+    for i, section in enumerate(model.sections):
+        parent = section.parentseg()
+        if parent is None:
+            continue
+        write(f"  connect {names[i]}(0), "
+              f"{names[index_of[id(parent.sec)]]}({parent.x:g})")
+    write("}")
+    write("")
+
+
+def _model_geometry(write: _Writer, sections, names: dict[int, str]) -> None:
+    """3D points and ``nseg``, chunked like every other generated proc here."""
+    chunks = _Writer()
+    count = 1
+    written = 0
+    chunks("proc geom_1() {")
+    for i, section in enumerate(sections):
+        chunks(f"  {names[i]} {{")
+        chunks("    pt3dclear()")
+        for point in range(section.n3d()):
+            chunks(f"    pt3dadd({section.x3d(point):.15g}, "
+                   f"{section.y3d(point):.15g}, {section.z3d(point):.15g}, "
+                   f"{section.diam3d(point):.15g})")
+            written += 1
+        chunks(f"    nseg = {section.nseg}")
+        chunks("  }")
+        if written >= _CHUNK:
+            count += 1
+            written = 0
+            chunks("}")
+            chunks(f"proc geom_{count}() {{")
+    chunks("}")
+
+    write.lines.extend(chunks.lines)
+    write("proc geom() {")
+    for i in range(1, count + 1):
+        write(f"  geom_{i}()")
+    write("}")
+    write("")
+
+
+def _model_biophysics(h, write: _Writer, sections, names: dict[int, str]) -> None:
+    chunks = _Writer()
+    count = 1
+    written = 0
+    chunks("proc biophys_1() {")
+
+    for index, section in enumerate(sections):
+        state = section.psection()
+        chunks(f"  {names[index]} {{")
+        chunks(f"    Ra = {section.Ra:.15g}")
+        cm = _uniform(state["cm"])
+        if cm is not None:
+            chunks(f"    cm = {cm:.15g}")
+        else:
+            for segment in section:
+                chunks(f"    cm({segment.x:.6g}) = {segment.cm:.15g}")
+        written += 2
+
+        for mechanism, variables in sorted(state["density_mechs"].items()):
+            chunks(f"    insert {mechanism}")
+            for parameter in _parameter_names(h, mechanism):
+                bare = parameter[: -len(mechanism) - 1]
+                if bare not in variables:
+                    continue
+                values = variables[bare]
+                shared = _uniform(values)
+                if shared is not None:
+                    chunks(f"    {parameter} = {shared:.15g}")
+                    written += 1
+                else:
+                    for segment, value in zip(section, values):
+                        chunks(f"    {parameter}({segment.x:.6g}) = "
+                               f"{value:.15g}")
+                        written += 1
+
+        # ion reversals, which live on the segment rather than a mechanism
+        for ion, variables in sorted(state["ions"].items()):
+            reversal = f"e{ion}"
+            if reversal not in variables:
+                continue
+            shared = _uniform(variables[reversal])
+            if shared is not None:
+                chunks(f"    {reversal} = {shared:.15g}")
+                written += 1
+
+        chunks("  }")
+        if written >= _CHUNK:
+            count += 1
+            written = 0
+            chunks("}")
+            chunks(f"proc biophys_{count}() {{")
+    chunks("}")
+
+    write.lines.extend(chunks.lines)
+    write("proc biophys() {")
+    for i in range(1, count + 1):
+        write(f"  biophys_{i}()")
+    write("}")
+    write("")
+
+
+def _model_stimuli(write: _Writer, model, names: dict[int, str], stimuli) -> None:
+    stimuli = list(stimuli)
+    if not stimuli:
+        return
+
+    index_of = {id(sec): i for i, sec in enumerate(model.sections)}
+    write(f"objref stim[{len(stimuli)}]")
+    write("proc stimuli() {")
+    for slot, (kind, node, attributes) in enumerate(stimuli):
+        node = int(node)
+        if node not in model.node_section:
+            raise KeyError(
+                f"save_model_hoc: stimulus {slot} is at node {node}, which is "
+                f"not on this model (it has nodes "
+                f"0..{model.tree.n_nodes - 1})"
+            )
+        section = model.node_section[node]
+        write(f"  {names[index_of[id(section)]]} {{")
+        write(f"    stim[{slot}] = new {kind}({model.node_x[node]:.6g})")
+        for attribute, value in attributes.items():
+            write(f"    stim[{slot}].{attribute} = {float(value):.15g}")
+        write("  }")
+    write("}")
+    write("")
+
+
+def _model_run(write: _Writer, h, v_init, celsius, tstop, dt) -> None:
+    write('load_file("stdrun.hoc")')
+    write(f"celsius = {h.celsius if celsius is None else celsius:.15g}")
+    if dt is not None:
+        write(f"dt = {dt:.15g}")
+    if tstop is not None:
+        write(f"tstop = {tstop:.15g}")
+    write("")
+    write("proc init_model() {")
+    write("  topol()")
+    write("  geom()")
+    write("  biophys()")
+    write("}")
+    write("init_model()")
+    write("")
+    if v_init is not None:
+        write(f"v_init = {v_init:.15g}")
+    write("")
+    write("/*")
+    write("Not exported, because a section cannot be asked about them:")
+    write("  - recording vectors (h.Vector().record(...))")
+    write("  - NetStim / NetCon wiring and synaptic point processes")
+    write("  - anything set as an h.<global>, including GLOBAL mechanism")
+    write("    parameters, which are per-mechanism rather than per-section")
+    write("Add them below, then finitialize(v_init) and continuerun(tstop).")
+    write("*/")

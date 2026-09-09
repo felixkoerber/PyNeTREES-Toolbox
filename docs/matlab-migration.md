@@ -98,7 +98,7 @@ nodes_soma = find(tree.R == find(strcmp(tree.rnames,'soma')));
 soma_node  = nodes_soma(round(length(nodes_soma)/2));
 ```
 ```python
-nodes_soma = tree.region_nodes("soma")
+mask_soma = tree.region_nodes("soma")   # a boolean mask
 soma_node  = int(nodes_soma[len(nodes_soma) // 2])
 ```
 

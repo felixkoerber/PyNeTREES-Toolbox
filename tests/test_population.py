@@ -128,11 +128,32 @@ def test_an_empty_tree_keeps_its_slot_at_depth(trees):
     assert results[0][1].size == 0
 
 
-def test_a_ragged_level_is_refused(trees):
-    """`[tree, [tree]]` could mean either shape, so it raises rather than
-    guessing which level the caller meant."""
-    with pytest.raises(ValueError, match="mixes trees"):
-        pt.len_tree([trees[0], [trees[1]]])
+def test_a_ragged_level_is_fine(trees):
+    """`[tree, [tree, tree]]` is one cell beside a group of two, and the
+    result mirrors it position for position. There is nothing to
+    disambiguate: the shape of the answer is read off the shape of the
+    question rather than inferred from it."""
+    results = pt.len_tree([trees[0], [trees[1], trees[2]]])
+
+    assert len(results) == 2
+    np.testing.assert_array_equal(results[0], pt.len_tree(trees[0]))
+    assert isinstance(results[1], list) and len(results[1]) == 2
+    np.testing.assert_array_equal(results[1][1], pt.len_tree(trees[2]))
+
+
+def test_ragged_nesting_survives_at_depth(trees):
+    results = pt.len_tree([trees[0], [[trees[1]], trees[2]], [trees[0]]])
+
+    def shape(x):
+        return [shape(e) for e in x] if isinstance(x, list) else "leaf"
+
+    assert shape(results) == ["leaf", [["leaf"], "leaf"], ["leaf"]]
+
+
+def test_an_element_that_is_not_a_tree_or_a_list_is_refused(trees):
+    """Ragged is fine; a string is not -- it has no per-tree meaning."""
+    with pytest.raises(TypeError, match="not a Tree or a list"):
+        pt.len_tree([trees[0], "not a tree"])
 
 
 def test_the_two_population_shapes_are_told_apart(trees):
@@ -143,6 +164,7 @@ def test_the_two_population_shapes_are_told_apart(trees):
     assert not is_population(np.zeros((3, 3)))
     assert is_nested_population([list(trees), list(trees)])
     assert is_nested_population([[[list(trees)]]])  # any depth, not just two
+    assert is_nested_population([trees[0], [trees[1]]])  # ragged counts too
     assert not is_nested_population(trees)
     assert not is_nested_population([])
 

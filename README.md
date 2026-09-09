@@ -66,26 +66,32 @@ pip install -e ".[all]"
 pip install -e ".[all-no-neuron]"
 ```
 
-`all` pulls in every runtime dependency — plotting, NEURON, all the I/O
-formats, image stacks, the notebook stack (ipykernel + trame), and pytest —
-**except Blender** (`bpy` is a ~300 MB wheel that pins `numpy < 2`; add it
-with `".[all,blender]"` only if you need it, and see the note below).
-`all-no-neuron` is the same set with the `neuron` line dropped, so the
-install succeeds on Windows where `pip install neuron` cannot.
+`all` pulls in every runtime dependency — plotting, NEURON, Blender export,
+all the I/O formats, image stacks, the notebook stack (ipykernel + trame),
+and pytest. `all-no-neuron` is the same set with the `neuron` line dropped,
+so the install succeeds on Windows, where `pip install neuron` cannot.
+
+> **Blender constrains the environment.** `bpy` is a ~300 MB wheel that
+> requires **`numpy < 2` and CPython 3.11**, so installing `all` holds the
+> whole environment there. If you would rather have numpy 2 — or are on
+> Python 3.12+ — use **`".[all-no-blender]"`**, which is identical in every
+> other respect. Both are fully tested; the suite passes on numpy 1.26 and
+> on 2.x.
 
 The extras are separable if you want a smaller install:
 
 | Command | What you get |
 |---|---|
 | `pip install -e .` | Core only — NumPy, SciPy, pandas |
-| `pip install -e ".[all]"` | **Everything except Blender** — the default on Linux/macOS |
+| `pip install -e ".[all]"` | **Everything** — the default on Linux/macOS. Holds numpy < 2 and Python 3.11, because `bpy` does |
+| `pip install -e ".[all-no-blender]"` | Same minus Blender, and therefore the numpy 2 / Python 3.12+ variant |
 | `pip install -e ".[all-no-neuron]"` | Same as `all` minus NEURON — the default on Windows |
 | `pip install -e ".[plot]"` | + PyVista, matplotlib, scikit-image — `pynetrees.plotting`, `hull_tree`'s 3D isosurface, and the tutorials |
 | `pip install -e ".[matlab]"` | + mat73 — **v7.3 `.mtr`/`.mat` files**, which is what current MATLAB writes |
 | `pip install -e ".[nmf]"` | + h5py — `.nmf` files |
 | `pip install -e ".[stacks]"` | + tifffile, imageio, scikit-image — `pynetrees.stacks` |
 | `pip install -e ".[notebook]"` | + ipykernel, ipywidgets, trame — run the notebooks in `examples/` |
-| `pip install -e ".[blender]"` | + bpy — `pynetrees.blender`. A ~300 MB wheel that **pins `numpy < 2`**; see the note below |
+| `pip install -e ".[blender]"` | + bpy — `pynetrees.blender`. A ~300 MB wheel that **requires `numpy < 2` and CPython 3.11** |
 | `pip install -e ".[neuron]"` | + NEURON (Linux/macOS only — see step 4) |
 | `pip install -e ".[dev]"` | + pytest |
 | `pip install -e ".[plot,dev]"` | A lean working set for hacking on the package |
@@ -98,11 +104,11 @@ pip install -r requirements.txt
 pip install -e . --no-deps
 ```
 
-> **`bpy` holds numpy back.** Installing the `blender` extra pins `numpy < 2`,
-> so the pinned set carries numpy 1.26 rather than 2.x. The suite passes on
-> both — the package itself only requires `numpy>=1.24` — but if you want
-> numpy 2 and Blender export in the same environment, you cannot have them
-> yet. Keep `bpy` in a separate environment if that matters to you.
+> **`bpy` holds numpy back.** Installing the `blender` extra requires
+> `numpy < 2`, so the pinned set carries numpy 1.26 rather than 2.x. The
+> suite passes on both — the package itself only requires `numpy>=1.24` —
+> but numpy 2 and Blender export cannot share an environment yet. That is
+> what `".[all-no-blender]"` is for.
 
 ### 3. Verify
 

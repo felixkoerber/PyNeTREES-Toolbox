@@ -6,7 +6,7 @@
 conda run -n pynetrees python scripts/gen_function_reference.py
 ```
 
-**184 public names** as of this generation (163 functions, 18 result types).
+**188 public names** as of this generation (166 functions, 18 result types).
 
 For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md). This page is the detailed counterpart: full docstrings, in full.
 
@@ -19,7 +19,7 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [I/O — `.neu`](#io-neu) (1)
 - [I/O — `.nmf`](#io-nmf) (2)
 - [I/O — NeuroML](#io-neuroml) (1)
-- [I/O — NEURON `.hoc`](#io-neuron-hoc) (3)
+- [I/O — NEURON `.hoc`](#io-neuron-hoc) (4)
 - [I/O — native (`.npz`, format dispatch)](#io-native-npz-format-dispatch) (4)
 - [Bundled sample data](#bundled-sample-data) (7)
 - [Topology](#topology) (23)
@@ -34,6 +34,8 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [Plotting](#plotting) (12)
 - [Image stacks](#image-stacks) (8)
 - [NEURON simulation](#neuron-simulation) (4)
+- [X3D export](#x3d-export) (1)
+- [POV-Ray export](#pov-ray-export) (1)
 - [Optional dependencies](#optional-dependencies) (1)
 - [Granule-cell model](#granule-cell-model) (5)
 - [Blender export (optional)](#blender-export-optional) (5)
@@ -383,6 +385,65 @@ to its second point's diameter, unless the tree is marked ``frustum``.
 NEURON takes a section's first point from where it attaches to its
 parent, so leaving the parent's diameter there inflates the section's
 surface area by a step change at every branch point.
+
+### `save_model_hoc(model, path: 'str | Path', *, stimuli=(), v_init=None, celsius=None, tstop=None, dt=None, mech_library: 'str | Path | None' = None) -> 'Path'`
+
+Write a **built** NEURON model out as a self-contained ``.hoc`` file.
+
+:func:`save_hoc` writes a morphology. This writes the morphology *plus
+everything that was done to it* -- segment counts, ``Ra``, ``cm``, every
+inserted mechanism and every parameter value it currently holds,
+including ones that vary along the cell -- so a model assembled here with
+:func:`~pynetrees.build_neuron_model`, :func:`~pynetrees.GC_init` and
+:func:`~pynetrees.insert_mechanism` can be handed to plain ``nrniv``,
+to a collaborator who does not use Python, or to a cluster job.
+
+The state is read back **from the live model**, not re-derived from
+whatever built it. That is the point: a density set by a callable
+gradient, a value poked in by hand afterwards, a mechanism inserted from
+the console -- all of it is in the sections, so all of it comes out.
+
+Parameters
+----------
+model : NeuronModel or GCModel
+    A model built by :func:`~pynetrees.build_neuron_model` or
+    :func:`~pynetrees.GC_init`.
+path : str or Path
+    ``.hoc`` is appended if missing.
+stimuli : sequence, optional
+    Point processes to recreate, as ``(kind, node, {attribute: value})``
+    triples -- e.g. ``("IClamp", soma, {"delay": 5, "dur": 100,
+    "amp": 0.09})``. Written as objects attached at the same position
+    the node maps to. Anything NEURON can construct with a segment
+    argument works; nothing is validated beyond the node index, because
+    the set of point processes depends on what is compiled.
+v_init, celsius, tstop, dt : float, optional
+    Written into the file when given, so the run conditions travel with
+    the model rather than living in whoever's memory. ``celsius``
+    defaults to the value currently set in this process, since it
+    affects every rate constant and forgetting it silently changes the
+    answer.
+mech_library : str or Path, optional
+    Emit ``nrn_load_dll("...")`` at the top. Needed whenever the model
+    uses mechanisms that are not NEURON's built-ins -- which is every
+    published model, including the bundled granule cell.
+
+Returns
+-------
+Path
+
+Notes
+-----
+**What is not written.** Recording vectors, ``NetStim``/``NetCon``
+wiring, and anything set through ``h.`` globals rather than on a section
+are outside what a section can be asked about, so they are not
+recovered. The file ends with a commented block naming them, rather than
+quietly producing a model that runs and is not the one you had.
+
+**Uniform parameters collapse.** A value shared by every segment of a
+section is written once for the section; only a value that actually
+varies is written per segment. The result is the same model and a file
+you can read.
 
 ### `save_nrn(tree: 'Tree', path: 'str | Path', res=None, *, electrotonics: 'bool' = False) -> 'Path'`
 
@@ -1826,26 +1887,61 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `insert_tree(tree: 'Tree', X, Y, Z, D, parent, R=None, *, full_output: 'bool' = False)`
+### `insert_tree(tree: 'Tree', X=None, Y=None, Z=None, D=None, parent=None, R=None, *, swc=None, radius: 'bool' = False, full_output: 'bool' = False)`
 
-Append new nodes to a tree.
+Append new nodes to a tree, as separate arrays or as an SWC matrix.
+
+Two calling conventions, both MATLAB-compatible in their own way::
+
+    insert_tree(tree, X=[...], Y=[...], Z=[...], D=[...], parent=[...])
+    insert_tree(tree, swc)          # [inode R X Y Z D idpar], MATLAB's
 
 Parameters
 ----------
 tree : Tree
-X, Y, Z, D : array_like
-    Coordinates [um] and diameters [um] of the new nodes.
-parent : array_like of int
-    0-based parent index for each new node. Replaces MATLAB's
-    ``[inode R X Y Z D idpar]`` SWC-tuple calling convention.
+X, Y, Z, D : array_like, optional
+    Coordinates [um] and diameters [um] of the new nodes. Give these or
+    ``swc``, not both.
+parent : array_like of int, optional
+    0-based parent index for each new node.
 R : array_like of int, optional
     Region index per new node; defaults to each node's parent's region.
+swc : array_like, optional
+    An ``(n, 7)`` matrix in MATLAB's order ``[inode R X Y Z D idpar]``,
+    passed positionally as the second argument the way
+    ``insert_tree (intree, swc)`` is. Also accepted as ``(n, 5)`` for
+    ``[R X Y Z D]``, where every node hangs off the tree's root.
+
+    ``inode`` is **ignored**, as it is in MATLAB -- the new nodes are
+    appended in the order given and their indices are whatever that
+    makes them (returned by ``full_output``).
+
+    ``idpar`` is **0-based here**, unlike MATLAB's 1-based column.
+    A negative value attaches to the tree's root.
+
+    .. warning::
+       Column 6 is a **diameter**, not a radius. The column layout is
+       identical to a standard ``.swc`` file, where that column *is* a
+       radius -- so feeding raw SWC rows in here silently halves every
+       diameter. MATLAB's docstring shouts the same warning ("NOTE that
+       diameter values are given and NOT radius!"); pass
+       ``radius=True`` to have the column doubled for you, or use
+       :func:`~pynetrees.load_swc` to read an actual file.
+radius : bool, default False
+    Treat ``swc``'s diameter column as a radius and double it. Only
+    meaningful with ``swc``.
 full_output : bool, default False
     If ``True``, return an :class:`InsertResult` ``(tree, inodes)``.
 
 Returns
 -------
 Tree or InsertResult
+
+Called with nothing to insert, the tree comes back unchanged -- MATLAB
+guards its entire body with ``if ~isempty (pars.swc)`` and documents the
+default as "nothing!!". Naming *some* of ``X``/``Y``/``Z``/``D``/
+``parent`` but not all of them is a mistake rather than a default, and
+raises.
 
 Raises
 ------
@@ -1938,76 +2034,83 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `resample_tree(tree: 'Tree', sr: 'float' = 10.0, method: 'str' = 'matlab', *, extend_terminals: 'bool' = True, interp_diameter: 'bool' = False, conserve_length: 'bool' = False, collapse_branches: 'bool' = True, preserve_branch_spacing: 'bool' = False, trim_regions: 'bool' = True) -> 'Tree'`
+### `resample_tree(tree: 'Tree', sr: 'float' = 10.0, method: 'str' = 'default', *, extend_terminals: 'bool' = True, interp_diameter: 'bool' = False, conserve_length: 'bool' = False, collapse_branches: 'bool' = True, preserve_branch_spacing: 'bool' = False, trim_regions: 'bool' = True) -> 'Tree'`
 
 Redistribute a tree's nodes to roughly ``sr`` [um] spacing.
 
-Parameters
-----------
-tree : Tree
-sr : float, default 10.0
-    Target internode spacing [um].
-method : {'matlab', 'anchors'}, default 'matlab'
-    Which abstraction to use for the bits resampling leaves
-    underdetermined -- MATLAB's own docstring says "some abstraction
-    principles need to be arbitrarily set", and the two methods set
-    them differently.
+    Parameters
+    ----------
+    tree : Tree
+    sr : float, default 10.0
+        Target internode spacing [um].
+    method : {'matlab', 'anchors'}, default 'matlab'
+        Which abstraction to use for the bits resampling leaves
+        underdetermined -- MATLAB's own docstring says "some abstraction
+        principles need to be arbitrarily set", and the two methods set
+        them differently.
 
-    - ``'matlab'`` -- a faithful port of `resample_tree.m`. Every node
-      in the result sits at an exact multiple of ``sr`` path length
-      from the root, because *all* original nodes are deleted after the
-      grid points are inserted. Branch and termination points therefore
-      **move** onto the grid.
-    - ``'anchors'`` -- branch and termination points stay exactly where
-      they were, and only the nodes between them are redistributed.
-      Better when you care about branch-point positions (the NEURON
-      bridge does), but it is not what MATLAB computes.
+        - ``'matlab'`` -- a faithful port of `resample_tree.m`. Every node
+          in the result sits at an exact multiple of ``sr`` path length
+          from the root, because *all* original nodes are deleted after the
+          grid points are inserted. Branch and termination points therefore
+          **move** onto the grid.
+        - ``'anchors'`` -- branch and termination points stay exactly where
+          they were, and only the nodes between them are redistributed.
+          Better when you care about branch-point positions (the NEURON
+          bridge does), but it is not what MATLAB computes.
 
-extend_terminals : bool, default True
-    Stretch each terminal segment by ``sr / 2`` first, so the grid
-    does not systematically truncate branch tips. MATLAB does this
-    unconditionally; here it is switchable.
-interp_diameter : bool, default False
-    MATLAB's ``'-d'``. Interpolate diameters along each segment rather
-    than inheriting the child node's. Changes total surface and volume,
-    which is why it is off by default.
-conserve_length : bool, default False
-    MATLAB's ``'-l'``. After resampling, stretch every segment back to
-    exactly ``sr`` so total path lengths match the original. The tree
-    grows slightly overall, so this is wrong for automated
-    reconstruction pipelines and right for length-preserving analysis.
-collapse_branches : bool, default True
-    Merge branch daughters that end up implausibly close together
-    (within 0.75 * 2 * ``sr`` of path length of each other). MATLAB's
-    ``'-v'`` switches this *off*; the sense is inverted here per Design
-    Decision #41.
-preserve_branch_spacing : bool, default False
-    MATLAB's ``'-b'``. Lengthen sub-``sr`` segments that run between two
-    branch points, so consecutive branch points do not collapse into a
-    multifurcation. MATLAB's own docstring warns this "does not
-    preserve length" and "might give a mess with high sr".
-trim_regions : bool, default True
-    Drop region names left unused after resampling. MATLAB's ``'-r'``
-    switches this off; inverted here per #41.
+    extend_terminals : bool, default True
+        Stretch each terminal segment by ``sr / 2`` first, so the grid
+        does not systematically truncate branch tips. MATLAB does this
+        unconditionally; here it is switchable.
+    interp_diameter : bool, default False
+        MATLAB's ``'-d'``. Interpolate diameters along each segment rather
+        than inheriting the child node's. Changes total surface and volume,
+        which is why it is off by default.
+    conserve_length : bool, default False
+        MATLAB's ``'-l'``. After resampling, stretch every segment back to
+        exactly ``sr`` so total path lengths match the original. The tree
+        grows slightly overall, so this is wrong for automated
+        reconstruction pipelines and right for length-preserving analysis.
+    collapse_branches : bool, default True
+        Merge branch daughters that end up implausibly close together
+        (within 0.75 * 2 * ``sr`` of path length of each other). MATLAB's
+        ``'-v'`` switches this *off*; the sense is inverted here per Design
+        Decision #41.
+    preserve_branch_spacing : bool, default False
+        MATLAB's ``'-b'``. Lengthen sub-``sr`` segments that run between two
+        branch points, so consecutive branch points do not collapse into a
+        multifurcation. MATLAB's own docstring warns this "does not
+        preserve length" and "might give a mess with high sr".
+    trim_regions : bool, default True
+        Drop region names left unused after resampling. MATLAB's ``'-r'``
+        switches this off; inverted here per #41.
 
-Returns
--------
-Tree
+    Returns
+    -------
+    Tree
 
-Notes
------
-``method='matlab'`` is the default as of Design Decision #45, reversing
-#23. The port originally shipped only the anchor-preserving variant, on
-the grounds that MATLAB's snapping rule is arbitrary -- which is true,
-but "arbitrary" is not the same as "wrong", and defaulting to something
-other than the reference implementation makes every downstream number
-quietly incomparable.
+    Notes
+    -----
+``method='default'`` **is** MATLAB's rule -- it snaps nodes to a
+    ``0, sr, 2*sr, ...`` path-length grid -- and is the default as of Design
+    Decision #45, reversing #23. The port originally shipped only the
+    anchor-preserving variant, on the grounds that the snapping rule is
+    arbitrary; which is true, but "arbitrary" is not the same as "wrong",
+    and defaulting to something other than the reference implementation
+    makes every downstream number quietly incomparable.
 
-A single-node tree has nothing to resample and is returned unchanged.
+    It is spelled ``'default'`` rather than ``'matlab'`` because every
+    function in this package reproduces MATLAB unless it says otherwise, so
+    naming one option after that says nothing that distinguishes it. What
+    distinguishes the alternative is what it preserves, and it is named
+    ``'anchors'`` for that.
 
-Accepts a **list of trees** (or a list of lists of trees) as well as a
-single one, returning results in the same shape -- see
-:mod:`pynetrees._population`.
+    A single-node tree has nothing to resample and is returned unchanged.
+
+    Accepts a **list of trees** (or a list of lists of trees) as well as a
+    single one, returning results in the same shape -- see
+    :mod:`pynetrees._population`.
 
 ### `restrain_tree(tree: 'Tree', maxpl: 'float' = 400.0, interpolate: 'bool' = True) -> 'Tree'`
 
@@ -2437,10 +2540,10 @@ single one, returning results in the same shape -- see
 
 ### `soma_tree(tree: 'Tree', maxD: 'float' = 30.0, length: 'float | None' = None, tag_region: 'bool' = False, overlap_correction: 'bool' = False) -> 'Tree'`
 
-Reshape diameter near the root into a cosine soma profile of
-(approximate) target diameter ``maxD`` and length ``length``
-(default ``1.5 * maxD``). If ``tag_region``, affected nodes are
-(re)labeled with a ``"soma"`` region.
+Reshape diameter near the root into a cosine soma profile of peak
+diameter ``maxD`` and axial extent ``length`` (default ``1.5 * maxD``).
+If ``tag_region``, affected nodes are (re)labeled with a ``"soma"``
+region.
 
 Parameters
 ----------
@@ -2468,6 +2571,36 @@ overlap_correction : bool, default False
 Returns
 -------
 Tree
+
+Notes
+-----
+**``maxD`` and ``length`` are independent.** ``length`` only *defaults*
+to ``1.5 * maxD``; give both and both are honoured, so a squat soma
+(``maxD=30, length=20``) and an elongated one (``maxD=30, length=90``)
+are equally reachable.
+
+That is worth stating because MATLAB's docstring carries the line
+*"Note! This function was recently corrected to match maxD and l!"*,
+which reads as though the two were being tied together. They are not.
+The correction was to the profile itself: the superseded formula
+
+.. code-block:: matlab
+
+    maxD / 4 * cos (pi * Plen / (l / 2)) + maxD / 4
+
+peaks at ``maxD / 2`` rather than ``maxD``, and completes a full cosine
+period inside the selected region instead of a quarter -- so neither
+requested number was actually attained. The current formula,
+``maxD * cos (pi * Plen / l)`` over the nodes with ``Plen < l / 2``,
+reaches exactly ``maxD`` at the root and exactly zero at ``l / 2``.
+"Matching maxD and l" means *attaining* them, not relating them.
+
+This port implements the corrected formula, and always has.
+
+The profile is a floor, not an overwrite: a node already thicker than
+the cosine keeps its own diameter (MATLAB's ``max (tree.D (indy),
+...)``), so running this on a tree that already has a soma cannot make
+it thinner.
 
 An **empty tree** is returned unchanged -- see :mod:`pynetrees._empty`.
 
@@ -3005,30 +3138,40 @@ float
 
 Notes
 -----
-**This deliberately does not reproduce MATLAB's version**, whose 3D
-branch contradicts both its own documentation and its own 2D branch in
-two independent ways -- visible directly in the source, so this is a
-confirmed defect and not merely a suspicion, even though Octave's
-missing ``boundary`` meant it could not be executed here:
+**Upstream has since fixed the two defects this port deviated from.**
+The version of ``convexity_tree.m`` this was written against had a 3D
+branch that contradicted both its own documentation and its own 2D
+branch:
 
-1. It wraps the terminals with ``boundary (X, Y, Z, 0)``, and shrink 0
+1. It wrapped the terminals with ``boundary (X, Y, Z, 0)``, and shrink 0
    is documented by MathWorks as the **convex hull** -- not the
-   "tightest boundary" the docstring promises, and one against which
+   "tightest boundary" the docstring promised, and one against which
    every segment between interior points lies inside by definition.
-   The 2D branch correctly asks for shrink 1.
-2. It then returns ``c = 1 - nnz (Inds) / (nS1 * nS2)`` where ``Inds``
-   flags the pairs that *did not* cross the surface, i.e. the ones
-   inside. The 2D branch returns ``nnz (Inds) / (nS1 * nS2)`` from the
-   same flag. One of the two has the sign inverted, and it is the 3D
-   one that disagrees with the documented meaning.
+   The 2D branch correctly asked for shrink 1.
+2. It returned ``c = 1 - nnz (Inds) / (nS1 * nS2)`` where ``Inds`` flags
+   the pairs that *did not* cross the surface, i.e. the ones inside,
+   while the 2D branch returned ``nnz (Inds) / (nS1 * nS2)`` from the
+   same flag. One of the two had the sign inverted, and it was the 3D
+   one that disagreed with the documented meaning.
 
-Between them, the 3D result is close to the fraction of terminal pairs
-with an endpoint on the convex hull -- a measure of how many terminals
-happen to be extremal, not of convexity. See MATLAB_TOOLBOX_BUGS.md.
+Between them the old 3D result was close to the fraction of terminal
+pairs with an endpoint on the convex hull -- a measure of how many
+terminals happen to be extremal, not of convexity. This port therefore
+declined to reproduce it, and said so.
 
-This version tests against the **space-filling hull** instead, which is
-the standard definition of convexity for a shape and the only version
-that can distinguish a compact arbor from a lobed one.
+The 2026 TREES release changes exactly those two lines: ``boundary(...,
+1)`` and ``c = nnz (Inds) / (nS1 * nS2)``. So current MATLAB and this
+function now measure the same thing, and the deviation is historical.
+What remains is a difference of *estimator*, not of definition: MATLAB
+samples pairs of terminals and tests the straight segment between them
+against a boundary mesh, which this does too -- but against the
+**space-filling hull**, and with the containment test cast as one ray
+per pair rather than a vendored point-in-mesh routine.
+
+A numeric comparison against the fixed MATLAB version is tracked in
+WORK_PLAN.md; the residual difference is expected to be the
+shrink-to-alpha mapping documented on :func:`boundary_tree`, not the
+sign.
 
 An **empty tree** gives an empty result rather than an error -- see
 :mod:`pynetrees._empty`.
@@ -3848,6 +3991,13 @@ evidence of anything more interesting.
 
 Output of :func:`sholl_tree`.
 
+A named tuple, like every other multi-output result in this package, so
+it unpacks in MATLAB's own order --
+``[s, dd, sd, XP, YP, ZP, iD] = sholl_tree (...)`` becomes
+``s, dd, sd, XP, YP, ZP, iD = sholl_tree(...)`` -- while
+``result.s`` still works and reads better at a call site that wants one
+field.
+
 Attributes
 ----------
 s : np.ndarray
@@ -3862,6 +4012,16 @@ XP, YP, ZP : np.ndarray
     all diameters).
 iD : np.ndarray
     For each intersection point, the index into ``dd`` it belongs to.
+
+| Field | Description |
+|---|---|
+| `s` | Alias for field number 0 |
+| `dd` | Alias for field number 1 |
+| `sd` | Alias for field number 2 |
+| `XP` | Alias for field number 3 |
+| `YP` | Alias for field number 4 |
+| `ZP` | Alias for field number 5 |
+| `iD` | Alias for field number 6 |
 
 ### `bf_tree(data: 'Tree | list[Tree] | np.ndarray', dim: 'int' = 3, fit_constants: 'tuple[float, float, float] | None' = None) -> 'tuple[float, float]'`
 
@@ -3916,9 +4076,10 @@ n_radii : int, default 25
 n_directions : int, default 20000
     Directions sampled when measuring how much of each sphere lies
     inside the boundary.
-scale_factor : float, optional
-    Multiplier on the estimated mean branch length. Defaults to
-    MATLAB's rule -- see Notes.
+scale_factor : float, default 1.0
+    Multiplier on the estimated mean branch length. ``1.0`` is what
+    current MATLAB does; pass ``2.0`` to reproduce the pre-2026 size
+    fudge on a cell reaching beyond 500 um -- see Notes.
 rng : numpy Generator or int, optional
 
 Returns
@@ -3937,12 +4098,22 @@ the surface, and then reads off containment at all ``n_radii`` radii
 from the crossing parity. Same estimator, one pass instead of
 ``n_radii``, and no vendored code.
 
-**MATLAB's undocumented size fudge is reproduced but exposed.** Its 3D
-branch silently doubles the estimated mean branch length for cells
-reaching beyond 500 um (``if rmax > 500, sf = 2``) with no explanation
-anywhere in the file, and its 2D branch has no such rule. That is a
-discontinuity in a published measure, so it is kept for fidelity but
-surfaced as ``scale_factor`` -- pass ``1.0`` to switch it off.
+**MATLAB's undocumented size fudge is gone, and so is the default that
+reproduced it.** Its 3D branch used to silently double the estimated
+mean branch length for cells reaching beyond 500 um
+(``if rmax > 500, sf = 2``), with no explanation anywhere in the file
+and no 2D counterpart. This port reproduced it behind ``scale_factor``
+on the grounds that changing it would move published numbers silently.
+
+The 2026 TREES release **deletes that block** (``sf = 1`` throughout),
+so the port follows: ``scale_factor`` now defaults to ``1.0`` on both
+branches. Pass ``scale_factor=2.0`` to reproduce a pre-2026 result on a
+cell whose furthest node is beyond 500 um; nothing else changes.
+
+Note that upstream's deletion took ``rmax = max (eucs (:))`` with it,
+which its **3D** branch still uses -- so current MATLAB's
+``dissectSholl_tree`` raises on its own default path. See
+MATLAB_TOOLBOX_BUGS.md.
 
 The 2D branch also extrapolates the first root-angle bin
 (``rVraw(1) = rVraw(2) + (rVraw(2) - rVraw(3))``, patching over the
@@ -4727,6 +4898,121 @@ time axis [ms] and ``v`` maps each recorded node to its voltage trace
 
 ---
 
+## X3D export
+
+A tree as cylinders in a browser-viewable XML scene.
+
+### `save_x3d(tree: 'Tree', path: 'str | Path', *, color=None, offset=(0.0, 0.0, 0.0), nodes=None, spheres: 'bool' = False, transparency: 'float | None' = None, diameters: 'str | None' = None, viewpoint: 'bool' = True) -> 'Path'`
+
+Write a tree as X3D cylinders.
+
+Parameters
+----------
+tree : Tree
+path : str or Path
+    ``.x3d`` is appended if missing.
+color : RGB triple or (n_nodes, 3) array, optional
+    One colour for the whole tree, or one per node. Components in
+    ``[0, 1]``. Defaults to black. Unlike MATLAB this does **not** take
+    a scalar per node to push through a colormap -- see
+    :func:`_colors`.
+offset : (3,) array_like, default (0, 0, 0)
+    Added to every coordinate. MATLAB's ``DD``, for laying several
+    exported cells out side by side in one scene.
+nodes : array_like, optional
+    Boolean mask or indices selecting which nodes to write. MATLAB's
+    ``ipart``. Default: all of them.
+spheres : bool, default False
+    Also put a ``<Sphere>`` at each node. MATLAB's ``'-o'``. Worth it at
+    sharp branch points, where two cylinders alone leave a visible wedge
+    of empty space.
+transparency : float, optional
+    ``0`` opaque, ``1`` invisible. Defaults to ``0.3`` without
+    ``spheres`` and ``0`` with them, which is what MATLAB does -- though
+    only as a side effect of the two branches of its ``'-o'`` test
+    having drifted apart, and its docstring mentions neither.
+diameters : {'thin', 'thick'}, optional
+    ``'thin'`` draws everything at 1 um; ``'thick'`` adds 3 um to every
+    diameter. MATLAB's ``'-thin'``/``'-thick'``, for making a thin arbor
+    visible in a wide view.
+viewpoint : bool, default True
+    Write a ``<Viewpoint>`` framing the cell, so a viewer opens looking
+    at it rather than at the origin. MATLAB derives this from the
+    current MATLAB axis (``'-v'``); with no figure to read, this
+    computes it from the tree's own bounding box.
+
+Returns
+-------
+Path
+    The file written.
+
+Notes
+-----
+The root has no segment of its own -- there is nothing behind it to draw
+a cylinder to -- so it contributes a sphere and nothing else. MATLAB
+instead lets the root's cylinder collapse to zero length and relies on
+the ``NaN`` that its normalisation produces to skip it, which works but
+means the file's shape depends on a division by zero.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
+
+---
+
+## POV-Ray export
+
+A tree as a ray-traceable scene: geometry plus a scene file to render it.
+
+### `save_pov(tree: 'Tree', path: 'str | Path', *, v=None, nodes=None, blob: 'bool' = True, minmax: 'bool' = False, color=(0.0, 0.0, 0.0), style: 'str | None' = 'plain', width: 'int' = 1200, height: 'int' = 900) -> 'Path'`
+
+Write a tree as a POV-Ray scene.
+
+Parameters
+----------
+tree : Tree
+path : str or Path
+    ``.pov`` is appended if missing. The stem becomes the POV-Ray
+    identifier the geometry is declared under, so it has to be a legal
+    one -- letters, digits and underscores, not starting with a digit.
+v : array_like, optional
+    One value per node, colour-coded through ``viridis``. Without it
+    every segment gets ``color``.
+nodes : array_like, optional
+    Boolean mask or indices selecting which segments to write. MATLAB's
+    ``ipart``.
+blob : bool, default True
+    Fuse the cylinders into one smooth implicit surface. Faster to
+    render and free of seams, at the cost of a slightly thinner cell --
+    see the module docstring.
+minmax : bool, default False
+    Normalise ``v`` between its own minimum and maximum rather than from
+    zero. MATLAB's ``'-minmax'``.
+color : RGB triple, default black
+    Used when ``v`` is ``None``.
+style : {'plain', 'fluorescence', 'coral'} or None, default 'plain'
+    Also write the ``sh<name>.pov`` scene file in this style; ``None``
+    writes only the geometry. See :data:`POV_STYLES`.
+width, height : int
+    Only used to set the camera's aspect ratio in the scene file.
+
+Returns
+-------
+Path
+    The **geometry** file. The scene file, when written, is
+    ``sh<name>.pov`` beside it.
+
+Notes
+-----
+Coordinates go out unchanged, so the scene is in micrometres and the
+camera distances in the scene file are too.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
+
+---
+
 ## Optional dependencies
 
 Reporting what an installation cannot do, up front.
@@ -4953,6 +5239,10 @@ Value: `{'all': {'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}, 'k_ion
 ### `GC_SPINE_DENSITY`
 
 Value: `{'soma': 0.0, 'axon': 0.0, 'axonh': 0.0, 'GCL': 0.0, 'SGCL': 0.0, 'adendIML': 0.5, 'adendMML': 1.0, 'adendOML': 1.0}`
+
+### `POV_STYLES`
+
+Value: `{'plain': ('rgbt <1, 1, 1, 0>', 1.0, 'black on white, no shading -- the one for a figure panel'), 'fluorescence': ('rgbt <0, 0, 0, 0.75>', 0.0, 'glowing cell on black, as a confocal stack looks'), 'coral': ('rgbt <0.7, 0.7, 0.7, 0.75>', 0.0, 'lit from above over a grey ground plane')}`
 
 ---
 

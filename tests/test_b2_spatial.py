@@ -243,14 +243,30 @@ def test_scale_is_the_unnormalised_sholl_integral(tree):
     assert result.scale == pytest.approx(trapezoid(observed, result.radii))
 
 
-def test_the_size_fudge_is_reproduced_but_overridable(tree):
-    """MATLAB's 3D branch silently doubles the estimated branch length for
-    cells reaching past 500 um, with no explanation and no 2D counterpart.
-    Kept for fidelity, but it must be possible to turn off."""
+def test_the_size_fudge_is_gone_from_the_default_but_still_reachable(tree):
+    """MATLAB's 3D branch used to silently double the estimated branch length
+    for cells past 500 um, with no explanation and no 2D counterpart. The
+    2026 release deletes that block, so `scale_factor` defaults to 1.0 on
+    both branches -- but reproducing a pre-2026 number has to stay possible."""
     default = pt.dissectSholl_tree(tree, c=0.9, rng=0)
+    explicit_one = pt.dissectSholl_tree(tree, c=0.9, scale_factor=1.0, rng=0)
     forced = pt.dissectSholl_tree(tree, c=0.9, scale_factor=2.0, rng=0)
-    # the sample tree is well under 500 um, so the default is sf = 1
+
+    assert default.err_angle == pytest.approx(explicit_one.err_angle)
     assert default.err_angle != pytest.approx(forced.err_angle)
+
+
+def test_the_default_no_longer_depends_on_how_big_the_cell_is(tree):
+    """The old rule made `scale_factor` jump from 1 to 2 the moment a cell's
+    furthest node crossed 500 um -- a discontinuity in a published measure.
+    Scaling a tree past that threshold must now change nothing about which
+    factor is used."""
+    big = pt.scale_tree(tree, 6.0)   # pushes the furthest node past 500 um
+    assert pt.eucl_tree(big).max() > 500
+
+    scaled_default = pt.dissectSholl_tree(big, c=0.9, rng=0)
+    scaled_one = pt.dissectSholl_tree(big, c=0.9, scale_factor=1.0, rng=0)
+    assert scaled_default.err_angle == pytest.approx(scaled_one.err_angle)
 
 
 def test_two_dimensional_dissection(tree):

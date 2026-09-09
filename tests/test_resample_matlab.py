@@ -1,4 +1,4 @@
-"""`resample_tree(method='matlab')` against the MATLAB reference.
+"""`resample_tree(method='default')` against the MATLAB reference.
 
 The reference values below were produced by running the *actual*
 `edit/resample_tree.m` in Octave 11 against the bundled `sample_tree`
@@ -31,7 +31,7 @@ MATLAB_REFERENCE = {
 @pytest.mark.parametrize("case", MATLAB_REFERENCE)
 def test_matches_matlab_node_count_and_length(case):
     kwargs, n_nodes, total_length = MATLAB_REFERENCE[case]
-    result = pt.resample_tree(pt.sample_tree(), method="matlab", **kwargs)
+    result = pt.resample_tree(pt.sample_tree(), method="default", **kwargs)
     assert result.n_nodes == n_nodes
     assert result.total_length == pytest.approx(total_length, abs=1e-3)
 
@@ -39,7 +39,7 @@ def test_matches_matlab_node_count_and_length(case):
 def test_matlab_is_the_default_method():
     tree = pt.sample_tree()
     default = pt.resample_tree(tree, sr=10.0)
-    explicit = pt.resample_tree(tree, sr=10.0, method="matlab")
+    explicit = pt.resample_tree(tree, sr=10.0, method="default")
     assert default.n_nodes == explicit.n_nodes == 78
 
 
@@ -55,7 +55,7 @@ def test_segments_come_out_no_longer_than_sr():
     asserting a property the algorithm does not have.
     """
     sr = 10.0
-    result = pt.resample_tree(pt.sample_tree(), sr=sr, method="matlab",
+    result = pt.resample_tree(pt.sample_tree(), sr=sr, method="default",
                               collapse_branches=False)
     seg = np.delete(pt.len_tree(result), result.root)
     assert seg.max() <= sr + 1e-9
@@ -64,7 +64,7 @@ def test_segments_come_out_no_longer_than_sr():
 
 def test_conserve_length_makes_every_segment_exactly_sr():
     sr = 10.0
-    result = pt.resample_tree(pt.sample_tree(), sr=sr, method="matlab",
+    result = pt.resample_tree(pt.sample_tree(), sr=sr, method="default",
                               conserve_length=True)
     seg = pt.len_tree(result)
     non_root = np.delete(seg, result.root)
@@ -73,8 +73,8 @@ def test_conserve_length_makes_every_segment_exactly_sr():
 
 def test_interp_diameter_changes_diameters_but_not_geometry():
     tree = pt.sample_tree()
-    plain = pt.resample_tree(tree, method="matlab")
-    interp = pt.resample_tree(tree, method="matlab", interp_diameter=True)
+    plain = pt.resample_tree(tree, method="default")
+    interp = pt.resample_tree(tree, method="default", interp_diameter=True)
 
     assert plain.n_nodes == interp.n_nodes
     np.testing.assert_allclose(plain.X, interp.X)
@@ -85,8 +85,8 @@ def test_interp_diameter_changes_diameters_but_not_geometry():
 
 def test_collapse_removes_grid_induced_near_coincident_branches():
     tree = pt.sample_tree()
-    with_collapse = pt.resample_tree(tree, method="matlab")
-    without = pt.resample_tree(tree, method="matlab", collapse_branches=False)
+    with_collapse = pt.resample_tree(tree, method="default")
+    without = pt.resample_tree(tree, method="default", collapse_branches=False)
     assert with_collapse.n_nodes < without.n_nodes
     assert without.n_nodes - with_collapse.n_nodes == 13  # MATLAB collapses 13
 
@@ -101,7 +101,7 @@ def test_collapse_tie_break_keeps_the_first_daughter():
     else exactly and left ~7 of 78 diameters differing by up to 0.023 um.
     """
     tree = pt.sample_tree()
-    result = pt.resample_tree(tree, method="matlab", interp_diameter=True)
+    result = pt.resample_tree(tree, method="default", interp_diameter=True)
     # MATLAB's diameter extremes for this exact configuration
     assert result.D.min() == pytest.approx(1.3, abs=1e-6)
     assert result.D.max() == pytest.approx(4.299, abs=1e-3)
@@ -109,12 +109,12 @@ def test_collapse_tie_break_keeps_the_first_daughter():
 
 def test_anchors_method_still_available_and_different():
     tree = pt.sample_tree()
-    matlab = pt.resample_tree(tree, method="matlab")
+    matlab = pt.resample_tree(tree, method="default")
     anchors = pt.resample_tree(tree, method="anchors")
     assert matlab.n_nodes != anchors.n_nodes
     assert pt.B_tree(anchors).sum() == pt.B_tree(tree).sum()
 
 
 def test_unknown_method_is_rejected():
-    with pytest.raises(ValueError, match="'matlab' or 'anchors'"):
+    with pytest.raises(ValueError, match="'default' or 'anchors'"):
         pt.resample_tree(pt.sample_tree(), method="grid")

@@ -6,6 +6,7 @@ Also covers `abel_tree` and `rootangle_tree`, which MATLAB files under
 """
 
 import numpy as np
+import pynetrees as pt
 import pytest
 from scipy import sparse
 
@@ -343,7 +344,7 @@ def test_resample_tree_extends_terminals_by_half_sr():
     anchors = resample_tree(tree, sr=10.0, method="anchors", extend_terminals=True)
     assert anchors.X.max() == pytest.approx(35.0)
 
-    matlab = resample_tree(tree, sr=10.0, method="matlab", extend_terminals=True)
+    matlab = resample_tree(tree, sr=10.0, method="default", extend_terminals=True)
     assert matlab.X.max() == pytest.approx(30.0)
 
 
@@ -412,3 +413,106 @@ def test_rootangle_tree_handles_single_node_tree():
     )
     angles = rootangle_tree(single)
     assert len(angles) == 1
+
+
+# ---------------------------------------------------------------------------
+# insert_tree's SWC-matrix calling convention
+# ---------------------------------------------------------------------------
+
+
+def _matlab_example_rows():
+    """The matrix from `insert_tree.m`'s own docstring example."""
+    return np.array([
+        [1, 0, 200, -140, 0, 4, 3],
+        [2, 0, 200,  -60, 0, 4, 3],
+    ], dtype=float)
+
+
+def test_insert_tree_takes_a_matlab_swc_matrix_positionally():
+    """`insert_tree (intree, swc)` is how MATLAB spells it, and a 2-D array
+    in the X slot cannot mean anything else."""
+    tree = pt.sample_tree()
+    before = tree.n_nodes
+
+    out, added = pt.insert_tree(tree, _matlab_example_rows(), full_output=True)
+
+    assert out.n_nodes == before + 2
+    np.testing.assert_array_equal(added, [before, before + 1])
+    np.testing.assert_allclose(out.X[added], [200.0, 200.0])
+    np.testing.assert_allclose(out.Y[added], [-140.0, -60.0])
+    np.testing.assert_allclose(out.D[added], [4.0, 4.0])
+    np.testing.assert_array_equal(pt.idpar_tree(out)[added], [3, 3])
+
+
+def test_the_swc_matrix_gives_the_same_tree_as_the_separate_arrays():
+    tree = pt.sample_tree()
+    rows = _matlab_example_rows()
+
+    from_matrix = pt.insert_tree(tree, rows)
+    from_arrays = pt.insert_tree(
+        tree, X=rows[:, 2], Y=rows[:, 3], Z=rows[:, 4], D=rows[:, 5],
+        parent=rows[:, 6].astype(int), R=rows[:, 1].astype(int),
+    )
+    np.testing.assert_allclose(from_matrix.X, from_arrays.X)
+    np.testing.assert_allclose(from_matrix.D, from_arrays.D)
+    np.testing.assert_array_equal(from_matrix.R, from_arrays.R)
+
+
+def test_column_six_is_a_diameter_and_radius_says_so():
+    """The layout matches a standard .swc file, where that column is a
+    *radius* -- so feeding raw SWC rows in would silently halve every
+    diameter. MATLAB shouts the same warning in its docstring."""
+    tree = pt.sample_tree()
+    rows = _matlab_example_rows()
+
+    as_diameter = pt.insert_tree(tree, rows)
+    as_radius = pt.insert_tree(tree, rows, radius=True)
+
+    added = slice(tree.n_nodes, None)
+    np.testing.assert_allclose(as_diameter.D[added], [4.0, 4.0])
+    np.testing.assert_allclose(as_radius.D[added], [8.0, 8.0])
+
+
+def test_a_five_column_matrix_hangs_everything_off_the_root():
+    tree = pt.sample_tree()
+    out = pt.insert_tree(tree, np.array([[0, 10.0, 10.0, 0.0, 2.0]]))
+
+    assert out.n_nodes == tree.n_nodes + 1
+    assert pt.idpar_tree(out)[-1] == tree.root
+
+
+def test_a_region_index_the_tree_has_no_name_for_is_refused():
+    """An out-of-range R is exactly what ver_tree flags; producing one on
+    purpose helps nobody. MATLAB inserts it regardless."""
+    tree = pt.sample_tree()
+    rows = _matlab_example_rows()
+    rows[:, 1] = 9
+
+    with pytest.raises(ValueError, match="region column"):
+        pt.insert_tree(tree, rows)
+
+
+def test_giving_both_a_matrix_and_arrays_is_refused():
+    tree = pt.sample_tree()
+    with pytest.raises(ValueError, match="not both"):
+        pt.insert_tree(tree, swc=_matlab_example_rows(), X=[1.0])
+
+
+def test_giving_nothing_to_insert_returns_the_tree_unchanged():
+    """MATLAB guards its whole body with `if ~isempty (pars.swc)` and
+    documents the default as "nothing!!"."""
+    tree = pt.sample_tree()
+    out, added = pt.insert_tree(tree, full_output=True)
+
+    assert out.n_nodes == tree.n_nodes
+    assert added.size == 0
+
+
+def test_naming_only_some_of_the_arrays_is_a_mistake_not_a_default():
+    with pytest.raises(TypeError, match="Y, Z"):
+        pt.insert_tree(pt.sample_tree(), X=[1.0], D=[1.0], parent=[0])
+
+
+def test_a_wrong_column_count_says_what_the_columns_should_be():
+    with pytest.raises(ValueError, match=r"\[inode R X Y Z D idpar\]"):
+        pt.insert_tree(pt.sample_tree(), np.zeros((2, 4)))

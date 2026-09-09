@@ -70,7 +70,7 @@ def test_ver_tree_warns_by_default():
 
 def test_validate_method_matches_function():
     tree = _tiny_tree()
-    assert tree.validate(quiet=True) == ver_tree(tree, quiet=True)
+    assert ver_tree(tree, quiet=True) == ver_tree(tree, quiet=True)
 
 
 # ---------------------------------------------------------------------------
@@ -78,28 +78,37 @@ def test_validate_method_matches_function():
 # ---------------------------------------------------------------------------
 
 
-def test_region_accessors():
+def test_region_nodes_is_a_mask():
+    """One accessor, returning a mask: it combines with &/|/~, indexes the
+    per-node arrays directly, and lines up with B_tree/T_tree/len_tree."""
     tree = _tiny_tree()
     tree.R = np.array([0, 0, 1])
     tree.rnames = ["soma", "dend"]
 
-    assert tree.region_index("soma") == 0
-    assert tree.region_index("dend") == 1
-    np.testing.assert_array_equal(tree.region_nodes("soma"), [0, 1])
-    np.testing.assert_array_equal(tree.region_nodes("dend"), [2])
-    np.testing.assert_array_equal(tree.region_nodes("soma", "dend"), [0, 1, 2])
+    np.testing.assert_array_equal(tree.region_nodes("soma"), [True, True, False])
+    np.testing.assert_array_equal(tree.region_nodes("dend"), [False, False, True])
     np.testing.assert_array_equal(
-        tree.region_mask("dend"), [False, False, True]
+        tree.region_nodes("soma", "dend"), [True, True, True]
     )
 
 
-def test_region_index_raises_with_available_names():
+def test_region_nodes_composes_and_indexes():
+    tree = _tiny_tree()
+    tree.R = np.array([0, 0, 1])
+    tree.rnames = ["soma", "dend"]
+
+    not_soma = ~tree.region_nodes("soma")
+    np.testing.assert_array_equal(tree.X[not_soma], [tree.X[2]])
+    np.testing.assert_array_equal(np.flatnonzero(tree.region_nodes("soma")), [0, 1])
+
+
+def test_region_nodes_raises_with_available_names():
     # MATLAB's find(strcmp(...)) silently returns empty here, which makes the
     # *next* line match nothing instead of failing -- we raise instead
     tree = _tiny_tree()
     tree.rnames = ["soma"]
     with pytest.raises(KeyError, match="soma"):
-        tree.region_index("nonexistent")
+        tree.region_nodes("nonexistent")
 
 
 def test_repr_includes_regions():

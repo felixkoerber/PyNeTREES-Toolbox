@@ -5,14 +5,16 @@ extension; the per-format functions below are there for when you want to be
 explicit, or need an option only one format has.
 """
 
-from .hoc import save_hoc, save_nrn, t2n_interface
+from .hoc import save_hoc, save_model_hoc, save_nrn, t2n_interface
 from .mtr import load_mtr, save_mtr
 from .native import load_npz, load_tree, save_npz, save_tree
 from .neu import load_neu
 from .neuroml import save_neuroml
 from .neurolucida import load_neurolucida
 from .nmf import load_nmf, save_nmf
+from .pov import POV_STYLES, save_pov
 from .swc import load_swc, save_swc
+from .x3d import save_x3d
 
 __all__ = [
     "load_tree",
@@ -28,7 +30,11 @@ __all__ = [
     "load_nmf",
     "save_nmf",
     "save_hoc",
+    "save_model_hoc",
     "save_nrn",
     "save_neuroml",
+    "save_pov",
+    "save_x3d",
+    "POV_STYLES",
     "t2n_interface",
 ]

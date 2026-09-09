@@ -2481,3 +2481,60 @@ and its population behaviour is covered on trees that qualify in
 `test_gc_model.py` instead.
 
 Suite: **932 passed, 17 skipped**.
+
+---
+
+## Round 5 — 2026-09-09
+
+Full detail in [CHANGELOG.md](CHANGELOG.md) 0.3.0. Recorded here are the
+decisions that outlive the release.
+
+**Design Decision #69 — the upstream reference moved.** The port was written
+against a pre-2026 TREES release; the 2026 release differs in four files. Two
+of those matter, and both vindicate a deviation this port had already made
+and documented: `convexity_tree`'s 3D branch (wrong shrink factor, inverted
+sign) is fixed exactly as the port's Notes said it should be, and
+`dissectSholl_tree`'s undocumented 500 µm size fudge is deleted. The port
+follows on both. New reference:
+`C:\Users\felix\Downloads\treestoolbox-master(3)\treestoolbox-master`.
+
+**Design Decision #70 — `Tree.meta` *is* MATLAB's ad-hoc struct fields.** Not
+a parallel mechanism: `meta` maps onto top-level fields of the tree struct in
+both directions, flat rather than nested, because `tree.col` and `tree.NID`
+are read by name by MATLAB's own functions and a nested container would be
+invisible to all of them. Consequence: the bundled granule cells' `NID` and
+`col`, dropped since `.mtr` support landed, now survive. No v7.3 was needed
+for this; the separate "v5 caps file size" problem is untouched.
+
+**Design Decision #71 — `region_nodes` returns a mask.** One accessor
+instead of three. A mask composes with `&`/`|`/`~`, indexes the per-node
+arrays, and lines up with `B_tree`/`T_tree`/`len_tree`; indices are one
+`np.flatnonzero` away and explicit when wanted. Note this *changes the
+meaning* of `region_nodes(...)[0]` rather than breaking it loudly, which is
+why every call site in the package, tests, notebooks and docs was swept.
+
+**Design Decision #72 — ragged populations are legal.** Reverses the 0.2.0
+decision to refuse `[tree, [tree]]`. A rule that maps element to element
+cannot be confused by its input; there was no ambiguity to protect against,
+and refusing a valid structure made the common case worse. Only an element
+that is neither a tree nor a list is still refused.
+
+**Design Decision #73 — export the *built* model, read from the live
+sections.** `save_model_hoc` introspects NEURON rather than re-deriving from
+whatever built the model, so a gradient set by a callable, a value poked in
+by hand and a mechanism inserted from the console all come out. Only settable
+PARAMETERs are written -- `psection()` also reports STATEs and ASSIGNEDs, and
+writing those would be serialising the middle of a simulation. Verified by
+reloading into a fresh NEURON process and comparing.
+
+**Design Decision #74 — Blender joins the default install, and the cost is
+stated at the decision.** `bpy` requires numpy < 2 and CPython 3.11, so `all`
+now holds the environment there and `all-no-blender` is the identical set
+without it. Verified in a second environment: the 17 Blender tests pass and
+the whole suite is green on numpy 1.26.
+
+**Confirmed, no change needed —** `soma_tree` does not tie `maxD` and `l`
+together (MATLAB's "corrected to match" note means the profile *attains*
+both, which this port already did); `plot_mpl_tree`/`dA_tree`, the integer
+`dim` convention and the absence of deprecation shims were all already
+correct from V1.

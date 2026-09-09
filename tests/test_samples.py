@@ -25,7 +25,7 @@ EXPECTED = {
 def test_sample_loaders_match_matlab_node_counts(name, n_nodes):
     tree = getattr(pt, name)()
     assert tree.n_nodes == n_nodes
-    assert tree.validate(quiet=True) == []
+    assert pt.ver_tree(tree, quiet=True) == []
 
 
 @pytest.mark.parametrize("name", EXPECTED)
@@ -70,7 +70,7 @@ def test_dLPTCs_population_has_all_five_groups():
     for name, trees in groups.items():
         assert trees, f"group {name} is empty"
         for tree in trees:
-            assert tree.validate(quiet=True) == []
+            assert pt.ver_tree(tree, quiet=True) == []
 
 
 def test_dLPTCs_feeds_stats_tree_directly():

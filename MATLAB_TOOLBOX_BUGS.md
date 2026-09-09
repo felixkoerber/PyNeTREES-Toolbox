@@ -17,6 +17,13 @@ replacement for either:
   faithfully preserved because a downstream behavior depends on it). Each
   entry below cross-references its Design Decision number where one exists.
 
+**Version**: checked against the TREES release this port was written from
+and re-checked against the **2026 release** (2026-09-09). Those two differ in
+exactly four files — `convexity_tree.m`, `dissectSholl_tree.m`, `LIF_tree.m`
+and `histax.m` — and entries below say which version they describe wherever
+that matters. Two long-standing bugs recorded here (1.12) are **fixed** in
+the 2026 release; one new one (1.11) is introduced by that same fix.
+
 **Methodology**: every claim here was checked against the actual source in
 `treestoolbox-master/` (file + line cited), and where practical, reproduced
 by tracing the algorithm by hand or exercising it during the Python port's
@@ -245,6 +252,81 @@ this way — `c` is a real keyword argument and computing it when absent
 assigns to a local, not over the parameter block. The port keeps MATLAB's
 `c` spelling (`shrink = 1 - c`) alongside a direct `shrink=` so callers can
 say what they mean. Design Decision #61 supersedes #35 for this cluster.
+
+### 1.11 `dissectSholl_tree` — the 2026 release deletes a variable its 3D branch still uses
+
+**File**: `metrics/dissectSholl_tree.m:107, 194, 204` (2026 release)
+
+The 2026 TREES release removes the undocumented size fudge that doubled the
+estimated mean branch length for cells reaching past 500 µm — a welcome fix
+in itself (see 5.x below). But the deletion took a needed assignment with it:
+
+```matlab
+     %--------------- True Sholl -----------------------
+     eucs = eucl_tree(ttree);
+-    rmax = max(eucs(:));
+-    if rmax > 500
+-        sf = 2;
+-    end
+     RVec = linspace(0, rmax, RRes);
+```
+
+That hunk is inside the **3D** branch (`elseif pars.dim3`, line 194). `rmax`
+is now assigned only at line 107, inside the **2D** branch (`if pars.dim2`,
+line 92) — and the two are mutually exclusive. So on the 3D path `rmax` is
+undefined when line 204 reads it.
+
+`dim3` defaults to `true` (line 68), so this is the *default* call path:
+
+```matlab
+dissectSholl_tree (sample_tree, 0.5)      % Undefined function or variable 'rmax'
+```
+
+The 2D branch is unaffected — it still assigns `rmax` two lines before using
+it. Restoring `rmax = max (eucs (:));` in the 3D branch (without the `if
+rmax > 500` test) is the one-line fix.
+
+This is the second independent breakage of this function's default path; see
+also the memo on `parseArgs` binding an options string to `c`, which makes
+`dissectSholl_tree (sample_tree, '-dim3 -a')` — the call in its own
+docstring — fail with *"Invalid shrink factor"*.
+
+**Python port**: unaffected. `radii` is built from `eucl_tree(tree).max()` in
+both branches, since there is no reason for the two to differ. The port
+followed the *intent* of the upstream change (`scale_factor` now defaults to
+`1.0` on both branches) without inheriting the slip; see `stats.py`'s
+`dissectSholl_tree` Notes.
+
+### 1.12 `convexity_tree` — two defects, both fixed upstream in 2026
+
+**File**: `metrics/convexity_tree.m:55, 105`
+
+Recorded here because the port deviated from it deliberately and the
+deviation is now historical. The version this port was written against had a
+3D branch that contradicted both its own documentation and its own 2D branch:
+
+```matlab
+[k, ~] = boundary(X, Y, Z, 0);      % shrink 0 == the CONVEX HULL
+...
+c = 1 - nnz(Inds) / (nS1 * nS2);    % 2D branch returns nnz(Inds)/(nS1*nS2)
+```
+
+Shrink 0 is documented by MathWorks as the convex hull, not the "tightest
+boundary" the docstring promises — and every segment between interior points
+lies inside a convex hull by definition. The sign was then inverted relative
+to the 2D branch computing the same quantity from the same flag. Together
+they made the 3D result approximate *the fraction of terminal pairs with an
+endpoint on the convex hull*: a measure of how many terminals happen to be
+extremal, not of convexity.
+
+The 2026 release changes exactly those two lines to `boundary(X, Y, Z, 1)`
+and `c = nnz(Inds) / (nS1 * nS2)`, which is what the port had independently
+concluded the function was meant to compute.
+
+**Python port**: `convexity_tree` already measured the fixed quantity and
+documented why. Its Notes now record that upstream agrees; the remaining
+difference is the estimator (space-filling hull, one ray cast per pair) and
+the shrink-to-alpha mapping tracked on `boundary_tree`, not the definition.
 
 ---
 

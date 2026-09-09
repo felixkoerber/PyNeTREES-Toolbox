@@ -80,10 +80,13 @@ axon, a particular dendritic layer, and so on.
 gc.rnames
 # ['axon', 'GCL', 'adendIML', 'adendMML', 'adendOML', 'adendOMLout', 'soma', 'axonh']
 
-gc.region_nodes("soma")                              # indices of somatic nodes
+gc.region_nodes("soma")                              # mask of somatic nodes
 gc.region_nodes("adendIML", "adendMML", "adendOML")  # all dendritic layers
-gc.region_mask("axon")                               # boolean mask instead
-gc.region_index("soma")                              # the raw R value
+
+# a mask composes and indexes directly
+gc.X[gc.region_nodes("soma")]                        # somatic coordinates
+gc.region_nodes("soma") & pt.T_tree(gc)              # somatic terminals
+np.flatnonzero(gc.region_nodes("soma"))              # indices, when you need them
 ```
 
 Regions drive plotting colours, per-compartment biophysics, and section

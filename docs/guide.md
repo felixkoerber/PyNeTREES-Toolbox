@@ -55,7 +55,7 @@ tree = load_tree("cell.npz")
 tree                       # Tree(name='25HSS', n_nodes=2252, regions=[dend])
 tree.n_nodes
 tree.rnames
-tree.validate()            # list of structural problems; [] means healthy
+pt.ver_tree(tree)          # list of structural problems; [] means healthy
 ```
 
 `validate()` (a.k.a. `ver_tree`) never raises — it returns problems and warns.

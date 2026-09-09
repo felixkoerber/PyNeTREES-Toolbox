@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pynetrees"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python port of the TREES toolbox for neuronal tree reconstruction, editing, analysis and synthesis."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -63,14 +63,18 @@ notebook = [
     "trame-vtk>=2.0",
     "trame-vuetify>=2.0",
 ]
-# The recommended default install on Linux/macOS: everything except Blender.
-# bpy is left out on purpose -- it is a ~300 MB wheel that pins numpy < 2
-# (see above).
-all = ["pynetrees[all-no-neuron,neuron]"]
-# The recommended default on Windows, where NEURON has no pip wheel: same as
-# `all` minus `neuron`. Install NEURON from the official binary installer
+# Everything, Blender included. `bpy` is a ~300 MB wheel that additionally
+# constrains the whole environment to **numpy < 2 and CPython 3.11**, which
+# is a real cost -- so `all-no-blender` exists for anyone who would rather
+# have numpy 2 than Blender export, and it is otherwise identical.
+all = ["pynetrees[all-no-blender,blender]"]
+# Everything except Blender, and therefore the variant that runs on numpy 2
+# and on Python 3.12+.
+all-no-blender = ["pynetrees[plot,neuron,matlab,nmf,stacks,notebook,dev]"]
+# The default on Windows, where NEURON has no pip wheel: everything else,
+# Blender included. Install NEURON from the official binary installer
 # afterwards (see the README).
-all-no-neuron = ["pynetrees[plot,matlab,nmf,stacks,notebook,dev]"]
+all-no-neuron = ["pynetrees[plot,matlab,nmf,stacks,notebook,dev,blender]"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

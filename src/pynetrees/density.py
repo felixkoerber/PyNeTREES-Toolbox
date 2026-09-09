@@ -930,30 +930,40 @@ def convexity_tree(tree: Tree, thr: float = 25.0, nodes=None,
 
     Notes
     -----
-    **This deliberately does not reproduce MATLAB's version**, whose 3D
-    branch contradicts both its own documentation and its own 2D branch in
-    two independent ways -- visible directly in the source, so this is a
-    confirmed defect and not merely a suspicion, even though Octave's
-    missing ``boundary`` meant it could not be executed here:
+    **Upstream has since fixed the two defects this port deviated from.**
+    The version of ``convexity_tree.m`` this was written against had a 3D
+    branch that contradicted both its own documentation and its own 2D
+    branch:
 
-    1. It wraps the terminals with ``boundary (X, Y, Z, 0)``, and shrink 0
+    1. It wrapped the terminals with ``boundary (X, Y, Z, 0)``, and shrink 0
        is documented by MathWorks as the **convex hull** -- not the
-       "tightest boundary" the docstring promises, and one against which
+       "tightest boundary" the docstring promised, and one against which
        every segment between interior points lies inside by definition.
-       The 2D branch correctly asks for shrink 1.
-    2. It then returns ``c = 1 - nnz (Inds) / (nS1 * nS2)`` where ``Inds``
-       flags the pairs that *did not* cross the surface, i.e. the ones
-       inside. The 2D branch returns ``nnz (Inds) / (nS1 * nS2)`` from the
-       same flag. One of the two has the sign inverted, and it is the 3D
-       one that disagrees with the documented meaning.
+       The 2D branch correctly asked for shrink 1.
+    2. It returned ``c = 1 - nnz (Inds) / (nS1 * nS2)`` where ``Inds`` flags
+       the pairs that *did not* cross the surface, i.e. the ones inside,
+       while the 2D branch returned ``nnz (Inds) / (nS1 * nS2)`` from the
+       same flag. One of the two had the sign inverted, and it was the 3D
+       one that disagreed with the documented meaning.
 
-    Between them, the 3D result is close to the fraction of terminal pairs
-    with an endpoint on the convex hull -- a measure of how many terminals
-    happen to be extremal, not of convexity. See MATLAB_TOOLBOX_BUGS.md.
+    Between them the old 3D result was close to the fraction of terminal
+    pairs with an endpoint on the convex hull -- a measure of how many
+    terminals happen to be extremal, not of convexity. This port therefore
+    declined to reproduce it, and said so.
 
-    This version tests against the **space-filling hull** instead, which is
-    the standard definition of convexity for a shape and the only version
-    that can distinguish a compact arbor from a lobed one.
+    The 2026 TREES release changes exactly those two lines: ``boundary(...,
+    1)`` and ``c = nnz (Inds) / (nS1 * nS2)``. So current MATLAB and this
+    function now measure the same thing, and the deviation is historical.
+    What remains is a difference of *estimator*, not of definition: MATLAB
+    samples pairs of terminals and tests the straight segment between them
+    against a boundary mesh, which this does too -- but against the
+    **space-filling hull**, and with the containment test cast as one ray
+    per pair rather than a vendored point-in-mesh routine.
+
+    A numeric comparison against the fixed MATLAB version is tracked in
+    WORK_PLAN.md; the residual difference is expected to be the
+    shrink-to-alpha mapping documented on :func:`boundary_tree`, not the
+    sign.
     """
     generator = np.random.default_rng(rng)
     if nodes is None:

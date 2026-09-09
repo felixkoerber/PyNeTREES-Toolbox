@@ -41,7 +41,6 @@ and is stated as such rather than glossed.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
@@ -104,9 +103,15 @@ def _empty_dissection(tree):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ShollResult:
+class ShollResult(NamedTuple):
     """Output of :func:`sholl_tree`.
+
+    A named tuple, like every other multi-output result in this package, so
+    it unpacks in MATLAB's own order --
+    ``[s, dd, sd, XP, YP, ZP, iD] = sholl_tree (...)`` becomes
+    ``s, dd, sd, XP, YP, ZP, iD = sholl_tree(...)`` -- while
+    ``result.s`` still works and reads better at a call site that wants one
+    field.
 
     Attributes
     ----------
@@ -898,9 +903,10 @@ def dissectSholl_tree(tree: Tree, c: float | None = None, dim: int = 3, *,
     n_directions : int, default 20000
         Directions sampled when measuring how much of each sphere lies
         inside the boundary.
-    scale_factor : float, optional
-        Multiplier on the estimated mean branch length. Defaults to
-        MATLAB's rule -- see Notes.
+    scale_factor : float, default 1.0
+        Multiplier on the estimated mean branch length. ``1.0`` is what
+        current MATLAB does; pass ``2.0`` to reproduce the pre-2026 size
+        fudge on a cell reaching beyond 500 um -- see Notes.
     rng : numpy Generator or int, optional
 
     Returns
@@ -919,12 +925,22 @@ def dissectSholl_tree(tree: Tree, c: float | None = None, dim: int = 3, *,
     from the crossing parity. Same estimator, one pass instead of
     ``n_radii``, and no vendored code.
 
-    **MATLAB's undocumented size fudge is reproduced but exposed.** Its 3D
-    branch silently doubles the estimated mean branch length for cells
-    reaching beyond 500 um (``if rmax > 500, sf = 2``) with no explanation
-    anywhere in the file, and its 2D branch has no such rule. That is a
-    discontinuity in a published measure, so it is kept for fidelity but
-    surfaced as ``scale_factor`` -- pass ``1.0`` to switch it off.
+    **MATLAB's undocumented size fudge is gone, and so is the default that
+    reproduced it.** Its 3D branch used to silently double the estimated
+    mean branch length for cells reaching beyond 500 um
+    (``if rmax > 500, sf = 2``), with no explanation anywhere in the file
+    and no 2D counterpart. This port reproduced it behind ``scale_factor``
+    on the grounds that changing it would move published numbers silently.
+
+    The 2026 TREES release **deletes that block** (``sf = 1`` throughout),
+    so the port follows: ``scale_factor`` now defaults to ``1.0`` on both
+    branches. Pass ``scale_factor=2.0`` to reproduce a pre-2026 result on a
+    cell whose furthest node is beyond 500 um; nothing else changes.
+
+    Note that upstream's deletion took ``rmax = max (eucs (:))`` with it,
+    which its **3D** branch still uses -- so current MATLAB's
+    ``dissectSholl_tree`` raises on its own default path. See
+    MATLAB_TOOLBOX_BUGS.md.
 
     The 2D branch also extrapolates the first root-angle bin
     (``rVraw(1) = rVraw(2) + (rVraw(2) - rVraw(3))``, patching over the
@@ -960,8 +976,10 @@ def dissectSholl_tree(tree: Tree, c: float | None = None, dim: int = 3, *,
         rootangle = rootangle_tree(tree)
         bf, k = bf_tree(rootangle, dim=dim)
         if scale_factor is None:
-            # MATLAB: 3D doubles the branch length above 500 um, 2D never does
-            scale_factor = 2.0 if (dim == 3 and rmax > 500) else 1.0
+            # 1.0 on both branches, matching the 2026 TREES release, which
+            # deleted the `if rmax > 500, sf = 2` block the old default
+            # reproduced
+            scale_factor = 1.0
         angle_norm = _centripetal_profile(
             radii, domain_norm, rootangle, total_length, bound.volume,
             dim, scale_factor,

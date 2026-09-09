@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import numpy as np
+import pynetrees as pt
 from pynetrees import load_mtr, ver_tree
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -65,3 +67,90 @@ def test_v73_detection_reads_the_header_not_the_exception():
 def test_load_mtr_missing_file_raises():
     with pytest.raises(FileNotFoundError):
         load_mtr("does_not_exist.mtr")
+
+
+# ---------------------------------------------------------------------------
+# Tree.meta <-> MATLAB's own ad-hoc struct fields
+# ---------------------------------------------------------------------------
+
+
+def test_matlab_ad_hoc_fields_land_in_meta():
+    """MATLAB's TREES hangs extra data straight off the tree struct, and the
+    bundled granule cells carry `NID` (T2N's hoc identifier) and `col` (the
+    plot colour). Both used to be dropped on the floor."""
+    tree = pt.gc_tree()
+    assert tree.meta["NID"] == "cell_SH07all2_1"
+    np.testing.assert_allclose(np.ravel(tree.meta["col"]), [0.0, 0.0, 0.3])
+
+
+def test_meta_round_trips_through_mtr(tmp_path):
+    tree = pt.sample_tree()
+    tree.meta.update({
+        "NID": "SH07_cell4",                              # a string
+        "col": np.array([1.0, 0.0, 0.0]),                 # tree.col
+        "Rho_soma": 1.37,                                 # a scalar
+        "per_node": np.arange(tree.n_nodes, dtype=float),  # a per-node array
+    })
+
+    back = pt.load_mtr(pt.save_mtr(tree, tmp_path / "cell.mtr"))
+
+    assert back.meta["NID"] == "SH07_cell4"
+    np.testing.assert_allclose(np.ravel(back.meta["col"]), [1.0, 0.0, 0.0])
+    assert float(np.ravel(back.meta["Rho_soma"])[0]) == pytest.approx(1.37)
+    np.testing.assert_allclose(
+        np.ravel(back.meta["per_node"]), np.arange(tree.n_nodes)
+    )
+
+
+def test_meta_is_written_flat_so_matlab_functions_can_see_it(tmp_path):
+    """A nested struct would round-trip just as well and be invisible to
+    every TREES function that reads `tree.col` by name."""
+    from scipy.io import loadmat
+
+    tree = pt.sample_tree()
+    tree.meta["col"] = np.array([1.0, 0.0, 0.0])
+    path = pt.save_mtr(tree, tmp_path / "cell.mtr")
+
+    raw = loadmat(str(path), simplify_cells=True)["tree"]
+    assert "col" in raw                       # top level, beside X/Y/Z/dA
+    assert "meta" not in raw
+
+
+def test_a_meta_key_that_collides_with_a_tree_field_is_refused(tmp_path):
+    """MATLAB has one flat namespace per struct, so `meta['X']` would either
+    corrupt the morphology or vanish depending on dict ordering."""
+    tree = pt.sample_tree()
+    tree.meta["X"] = "not the coordinates"
+
+    with pytest.raises(ValueError, match="collide"):
+        pt.save_mtr(tree, tmp_path / "cell.mtr")
+
+
+def test_a_meta_value_mtr_cannot_store_warns_rather_than_vanishing(tmp_path):
+    tree = pt.sample_tree()
+    tree.meta["a_function"] = len            # savemat cannot encode this
+
+    with pytest.warns(UserWarning, match="cannot store"):
+        back = pt.load_mtr(pt.save_mtr(tree, tmp_path / "cell.mtr"))
+    assert "a_function" not in back.meta
+
+
+def test_a_meta_key_that_is_not_a_matlab_field_name_warns(tmp_path):
+    tree = pt.sample_tree()
+    tree.meta["not a field"] = 1.0
+
+    with pytest.warns(UserWarning, match="not a valid MATLAB field name"):
+        pt.save_mtr(tree, tmp_path / "cell.mtr")
+
+
+def test_editing_a_matlab_tree_here_keeps_its_identity(tmp_path):
+    """The point of the whole thing: load from MATLAB, edit, write back, and
+    the fields MATLAB cares about are still there."""
+    tree = pt.gc_tree()
+    edited = pt.delete_tree(tree, tree.region_nodes("axon"), keep_regions=True)
+
+    back = pt.load_mtr(pt.save_mtr(edited, tmp_path / "edited.mtr"))
+    assert back.meta["NID"] == tree.meta["NID"]
+    np.testing.assert_allclose(
+        np.ravel(back.meta["col"]), np.ravel(tree.meta["col"])
+    )

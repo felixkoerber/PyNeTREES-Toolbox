@@ -300,25 +300,121 @@ class InsertResult(NamedTuple):
     """0-based indices of the newly added nodes, in input order."""
 
 
-def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None, *, full_output: bool = False):
-    """Append new nodes to a tree.
+def _unpack_swc(swc, tree: Tree, R, radius: bool):
+    """Split an SWC-order matrix into the arrays :func:`insert_tree` takes.
+
+    ``(n, 7)`` is MATLAB's ``[inode R X Y Z D idpar]``; ``(n, 5)`` drops the
+    two index columns and leaves ``[R X Y Z D]``, with every node hanging
+    off the root. ``inode`` is ignored either way, exactly as MATLAB ignores
+    it -- the appended nodes take whatever indices appending gives them.
+    """
+    swc = np.atleast_2d(np.asarray(swc, dtype=float))
+    if swc.shape[1] == 7:
+        region, X, Y, Z, D, parent = (
+            swc[:, 1], swc[:, 2], swc[:, 3], swc[:, 4], swc[:, 5], swc[:, 6],
+        )
+    elif swc.shape[1] == 5:
+        region, X, Y, Z, D = (
+            swc[:, 0], swc[:, 1], swc[:, 2], swc[:, 3], swc[:, 4],
+        )
+        parent = np.full(len(swc), -1.0)
+    else:
+        raise ValueError(
+            f"insert_tree: swc must have 7 columns [inode R X Y Z D idpar] "
+            f"or 5 [R X Y Z D], got {swc.shape[1]}"
+        )
+
+    if radius:
+        D = D * 2.0
+
+    parent = parent.astype(int)
+    # a negative parent means "the root", which is how MATLAB's 1-based
+    # column spells an absent one (0) once it is shifted down
+    parent = np.where(parent < 0, tree.root, parent)
+
+    # An explicit `R=` wins: the caller who passes both is being specific,
+    # and silently preferring the matrix column would ignore them.
+    if R is None:
+        R = _swc_regions(region, tree)
+    return X, Y, Z, D, parent, R
+
+
+def _swc_regions(column, tree: Tree) -> np.ndarray:
+    """The ``R`` values an SWC region column means for *this* tree.
+
+    The column holds region *indices*, and MATLAB leaves it at that: a row
+    saying ``3`` inserts a node claiming ``tree.rnames{3}`` whether or not
+    the tree has three regions. Here an index past the end is refused,
+    naming what the tree does have -- an out-of-range ``R`` is precisely
+    what ``ver_tree`` flags, and producing one on purpose helps nobody.
+    """
+    region = np.asarray(column, dtype=int)
+    if region.size and (region.min() < 0 or region.max() >= len(tree.rnames)):
+        raise ValueError(
+            f"insert_tree: swc region column has values outside "
+            f"0..{len(tree.rnames) - 1}, which is what tree {tree.name!r} "
+            f"has region names for ({tree.rnames}). Add the region to "
+            f"`tree.rnames` first, or pass R= explicitly."
+        )
+    return region
+
+
+def insert_tree(tree: Tree, X=None, Y=None, Z=None, D=None, parent=None,
+                R=None, *, swc=None, radius: bool = False,
+                full_output: bool = False):
+    """Append new nodes to a tree, as separate arrays or as an SWC matrix.
+
+    Two calling conventions, both MATLAB-compatible in their own way::
+
+        insert_tree(tree, X=[...], Y=[...], Z=[...], D=[...], parent=[...])
+        insert_tree(tree, swc)          # [inode R X Y Z D idpar], MATLAB's
 
     Parameters
     ----------
     tree : Tree
-    X, Y, Z, D : array_like
-        Coordinates [um] and diameters [um] of the new nodes.
-    parent : array_like of int
-        0-based parent index for each new node. Replaces MATLAB's
-        ``[inode R X Y Z D idpar]`` SWC-tuple calling convention.
+    X, Y, Z, D : array_like, optional
+        Coordinates [um] and diameters [um] of the new nodes. Give these or
+        ``swc``, not both.
+    parent : array_like of int, optional
+        0-based parent index for each new node.
     R : array_like of int, optional
         Region index per new node; defaults to each node's parent's region.
+    swc : array_like, optional
+        An ``(n, 7)`` matrix in MATLAB's order ``[inode R X Y Z D idpar]``,
+        passed positionally as the second argument the way
+        ``insert_tree (intree, swc)`` is. Also accepted as ``(n, 5)`` for
+        ``[R X Y Z D]``, where every node hangs off the tree's root.
+
+        ``inode`` is **ignored**, as it is in MATLAB -- the new nodes are
+        appended in the order given and their indices are whatever that
+        makes them (returned by ``full_output``).
+
+        ``idpar`` is **0-based here**, unlike MATLAB's 1-based column.
+        A negative value attaches to the tree's root.
+
+        .. warning::
+           Column 6 is a **diameter**, not a radius. The column layout is
+           identical to a standard ``.swc`` file, where that column *is* a
+           radius -- so feeding raw SWC rows in here silently halves every
+           diameter. MATLAB's docstring shouts the same warning ("NOTE that
+           diameter values are given and NOT radius!"); pass
+           ``radius=True`` to have the column doubled for you, or use
+           :func:`~pynetrees.load_swc` to read an actual file.
+    radius : bool, default False
+        Treat ``swc``'s diameter column as a radius and double it. Only
+        meaningful with ``swc``.
     full_output : bool, default False
         If ``True``, return an :class:`InsertResult` ``(tree, inodes)``.
 
     Returns
     -------
     Tree or InsertResult
+
+    Called with nothing to insert, the tree comes back unchanged -- MATLAB
+    guards its entire body with ``if ~isempty (pars.swc)`` and documents the
+    default as "nothing!!". Naming *some* of ``X``/``Y``/``Z``/``D``/
+    ``parent`` but not all of them is a mistake rather than a default, and
+    raises.
 
     Raises
     ------
@@ -347,6 +443,35 @@ def insert_tree(tree: Tree, X, Y, Z, D, parent, R=None, *, full_output: bool = F
     The capability was previously undocumented and unvalidated; the
     forward-reference check above is what makes it safe to rely on.
     """
+    if swc is None and X is not None and np.ndim(X) == 2:
+        # `insert_tree(tree, matrix)` -- MATLAB's own shape. A 2-D array in
+        # the X slot cannot mean anything else, so this needs no flag.
+        swc, X = X, None
+    if swc is not None:
+        if any(a is not None for a in (X, Y, Z, D, parent)):
+            raise ValueError(
+                "insert_tree: give `swc` or the separate X/Y/Z/D/parent "
+                "arrays, not both"
+            )
+        X, Y, Z, D, parent, R = _unpack_swc(swc, tree, R, radius)
+    else:
+        given = {"X": X, "Y": Y, "Z": Z, "D": D, "parent": parent}
+        missing = sorted(name for name, value in given.items() if value is None)
+        if len(missing) == len(given):
+            # Nothing to insert. MATLAB guards its whole body with
+            # `if ~isempty (pars.swc)` and returns the tree untouched, and
+            # its docstring says so ("{DEFAULT: nothing!!}"), so this is
+            # faithful rather than lenient -- and it keeps
+            # `insert_tree(tree)` a no-op instead of an error in the
+            # population and empty-tree sweeps.
+            return InsertResult(tree, np.empty(0, dtype=int)) if full_output else tree
+        if missing:
+            raise TypeError(
+                f"insert_tree: {', '.join(missing)} missing. Give all of "
+                f"X/Y/Z/D/parent, or an `swc` matrix of "
+                f"[inode R X Y Z D idpar] instead."
+            )
+
     X, Y, Z, D = (np.asarray(a, dtype=float) for a in (X, Y, Z, D))
     parent = np.asarray(parent, dtype=int)
     n_new = len(X)
@@ -707,7 +832,7 @@ def _cat_meta(tree1: Tree, tree2: Tree) -> dict:
 def resample_tree(
     tree: Tree,
     sr: float = 10.0,
-    method: str = "matlab",
+    method: str = "default",
     *,
     extend_terminals: bool = True,
     interp_diameter: bool = False,
@@ -772,21 +897,30 @@ def resample_tree(
 
     Notes
     -----
-    ``method='matlab'`` is the default as of Design Decision #45, reversing
-    #23. The port originally shipped only the anchor-preserving variant, on
-    the grounds that MATLAB's snapping rule is arbitrary -- which is true,
-    but "arbitrary" is not the same as "wrong", and defaulting to something
-    other than the reference implementation makes every downstream number
-    quietly incomparable.
+``method='default'`` **is** MATLAB's rule -- it snaps nodes to a
+    ``0, sr, 2*sr, ...`` path-length grid -- and is the default as of Design
+    Decision #45, reversing #23. The port originally shipped only the
+    anchor-preserving variant, on the grounds that the snapping rule is
+    arbitrary; which is true, but "arbitrary" is not the same as "wrong",
+    and defaulting to something other than the reference implementation
+    makes every downstream number quietly incomparable.
+
+    It is spelled ``'default'`` rather than ``'matlab'`` because every
+    function in this package reproduces MATLAB unless it says otherwise, so
+    naming one option after that says nothing that distinguishes it. What
+    distinguishes the alternative is what it preserves, and it is named
+    ``'anchors'`` for that.
 
     A single-node tree has nothing to resample and is returned unchanged.
     """
-    if method not in ("matlab", "anchors"):
-        raise ValueError(f"method must be 'matlab' or 'anchors', got {method!r}")
+    if method not in ("default", "anchors"):
+        raise ValueError(
+            f"method must be 'default' or 'anchors', got {method!r}"
+        )
     if tree.n_nodes < 2:
         return tree
 
-    if method == "matlab":
+    if method == "default":
         return _resample_matlab(
             tree, sr,
             extend_terminals=extend_terminals,

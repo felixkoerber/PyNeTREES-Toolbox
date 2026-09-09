@@ -27,9 +27,9 @@ exactly -- element ``[2][0][7]`` of the answer is the answer for tree
 ``[2][0][7]``, at every level. Nothing is flattened, so a caller who
 organised their cells into groups and subgroups gets those groups back.
 
-The structure has to be *regular*: at each level either every element is a
-tree, or every element is a list. A list mixing the two (``[tree, [tree]]``)
-raises rather than guessing which level the caller meant.
+Levels may be **ragged**: ``[tree, [tree, tree]]`` -- one cell beside a group
+of two -- returns ``[value, [value, value]]``. Every element is handled on
+its own terms, so there is no shape to infer and nothing to get wrong.
 
 Empty trees
 -----------
@@ -86,50 +86,51 @@ def is_population(obj) -> bool:
 
 
 def is_nested_population(obj) -> bool:
-    """Is this a list of populations -- groups of cells, nested to any depth?
+    """Is this a population with at least one level of nesting in it?
 
-    Recursive rather than one-level, so ``[[[t]], [[t], [t]]]`` counts. The
-    ``not is_population(obj)`` guard is what stops a flat list of trees from
-    also answering yes, which keeps the two predicates disjoint.
+    Recursive rather than one-level, so ``[[[t]], [[t], [t]]]`` counts, and
+    tolerant of ragged levels, so ``[t, [t]]`` counts too -- an element may
+    be a tree or a group. The ``not is_population(obj)`` guard is what stops
+    a *flat* list of trees from also answering yes, which keeps the two
+    predicates disjoint.
     """
     return (
         isinstance(obj, (list, tuple))
         and len(obj) > 0
         and not is_population(obj)
         and all(
-            is_population(group) or is_nested_population(group) for group in obj
+            isinstance(member, Tree)
+            or is_population(member)
+            or is_nested_population(member)
+            for member in obj
         )
     )
 
 
 def _children(level, name: str) -> list:
-    """The elements of one population level, checked for a regular shape.
+    """The elements of one population level, each a tree or a list of them.
 
-    Either every element is a tree or every element is a list; a level that
-    mixes them is ambiguous -- ``[tree, [tree]]`` could be a 2-cell group
-    whose second cell was wrapped by mistake, or a group of groups whose
-    first entry was not -- and guessing turns a typo into a silently
-    mis-shaped result.
+    A level may **mix** the two. ``[tree, [tree, tree]]`` is a perfectly
+    good structure -- one cell and a group of two -- and the result mirrors
+    it position for position: ``[value, [value, value]]``. There is nothing
+    to disambiguate, because the shape of the answer is read off the shape
+    of the question rather than inferred from it.
+
+    (An earlier version rejected mixed levels on the theory that they might
+    be a typo. That was wrong: a rule which maps element to element cannot
+    be confused by its input, and refusing a valid structure to guard
+    against a hypothetical mistake made the common case worse.)
+
+    What is still refused is an element that is neither -- a string, an
+    array, a number -- because that one really has no per-tree meaning.
     """
     members = list(level)
-    trees = [i for i, m in enumerate(members) if isinstance(m, Tree)]
-    lists = [i for i, m in enumerate(members) if isinstance(m, (list, tuple))]
-    if trees and lists:
-        raise ValueError(
-            f"{name}: population level mixes trees (at index {trees[0]}) with "
-            f"nested lists (at index {lists[0]}). Every element of a level "
-            f"must be a tree, or every element must be a list -- wrap the "
-            f"bare trees in their own list to make the nesting explicit."
-        )
-    if len(trees) + len(lists) != len(members):
-        bad = next(
-            i for i, m in enumerate(members)
-            if not isinstance(m, (Tree, list, tuple))
-        )
-        raise TypeError(
-            f"{name}: population element {bad} is a "
-            f"{type(members[bad]).__name__}, not a Tree or a list of them"
-        )
+    for index, member in enumerate(members):
+        if not isinstance(member, (Tree, list, tuple)):
+            raise TypeError(
+                f"{name}: population element {index} is a "
+                f"{type(member).__name__}, not a Tree or a list of them"
+            )
     return members
 
 
