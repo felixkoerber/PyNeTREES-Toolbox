@@ -3,10 +3,12 @@
 
 Verification status differs by function, and the docstrings say which:
 `M_atten_tree` and the `angleBd` pair are pure computation on the tree and
-are checked against their defining properties; `boundary_tree` and
-`convexity_tree` rest on MATLAB's built-in `boundary()`, which Octave does
-not implement, so **no differential check against MATLAB was possible** and
-they are checked against geometric properties only.
+are checked against their defining properties. `boundary_tree` rests on
+MATLAB's `boundary()`, which Octave does not implement -- it is now checked
+against MATLAB itself in `test_matlab_boundary.py`, and the geometric
+properties here still apply. `convexity_tree` deliberately does *not*
+reproduce MATLAB's number, for reasons its docstring gives and
+MATLAB_TOOLBOX_BUGS.md 1.13 quantifies, so it stays pinned to properties.
 """
 
 from __future__ import annotations

@@ -16,6 +16,116 @@ is left, per MATLAB file) and [MATLAB_TOOLBOX_BUGS.md](MATLAB_TOOLBOX_BUGS.md)
 
 ---
 
+## 0.3.1 — 2026-09-09
+
+Revalidation of everything that depended on MATLAB's `inpolyhedron`, now that
+the real File Exchange routine is on the path. **1050 tests pass, 17 skip**;
+0.3.0 was 992.
+
+One real bug found and fixed, one long-standing "not verifiable against
+MATLAB" claim retired, and two more upstream bugs recorded.
+
+### Fixed — `boundary_tree` now matches MATLAB exactly
+
+MATLAB's `boundary()` was the port's last unverifiable dependency: Octave
+does not implement it, so the differential harness had nothing to run, and
+the docstrings said so. It turns out `boundary.m` is a **readable m-file, not
+a built-in**, and it states outright what the shrink factor is:
+
+```matlab
+shp       = alphaShape (P, Inf);
+Acritical = criticalAlpha (shp, 'one-region');
+Ahispec   = alphaSpectrum (shp);  Ahispec = Ahispec (Ahispec >= Acritical);
+shp.Alpha = Ahispec (numA + 1 - max (ceil ((1 - S) * numA), 1));
+```
+
+The spectrum of a 3D alpha shape is just the sorted tetrahedron circumradii,
+and the shrink factor picks a **rank** within it. The port already did that.
+Its one error was the anchor: `shrink = 1` was pinned to the smallest radius
+at which no point is left out, where MATLAB pins it to the smallest radius at
+which the shape is also **connected** — `criticalAlpha(..., 'one-region')`
+rather than `'all-points'`.
+
+Those two coincide on `sample_tree` and `hss_tree`, which is exactly why the
+error survived an earlier differential session; on `hsn_tree` they are 149.97
+and 158.68, and the gap moved *every* shrink factor and cost up to 5% of the
+enclosed volume. `_one_region_cutoff` computes MATLAB's number with a
+union-find over the points — adding a simplex merges its vertices, a point no
+simplex has reached is a component of its own, so "one region" is precisely
+"one component", and both halves of the condition fall out of one loop.
+
+The result is **exact parity**: identical enclosed volume to every digit
+MATLAB prints, identical surface triangle count, and an identical
+inside/outside verdict on 20000 query points, for `sample_tree`, `hsn_tree`
+and `hss_tree` at shrink 0, 0.25, 0.5, 0.75 and 1, in 2D and 3D. 58 new tests
+in `tests/test_matlab_boundary.py` pin MATLAB's own output;
+`scripts/matlab/run_boundary_validation.m` regenerates it.
+
+This lands on `boundary_tree`, `scaleV_tree`, `dissectSholl_tree.V`,
+`r_mc_tree`, `theta_mc_tree` and `growth_tree`, all of which draw from this
+shape.
+
+### Verified — the three functions that reach it through `inpolyhedron`
+
+MATLAB's `r_mc_tree`, `theta_mc_tree` and `growth_tree` all fill a bounding
+box with `rand` and keep whatever `inpolyhedron` says is inside. This port
+samples the boundary's own simplices instead, weighted by volume — the same
+uniform distribution with nothing thrown away — so what needed checking was
+whether the two agree end to end. They do:
+
+| | MATLAB | port |
+|---|---|---|
+| `r_mc_tree` `r0` (`sample_tree`) | 2.82101 | 2.82101 — every digit |
+| `r_mc_tree` `R`, 400 iterations | 0.619638 | 0.620159 (0.08%) |
+| `r_mc_tree` `R`, volume-corrected | 0.566855 | 0.567399 (0.10%) |
+| `theta_mc_tree` (`sample_tree`) | 15.85 | 15.8877 |
+| `theta_mc_tree` (`hsn_tree`) | 24.24 | 24.3064 |
+
+The 1–2% gap in `R` at 20 iterations is the two samplers' noise, not bias: it
+collapses to 0.1% at 400. `theta_mc_tree`'s 0.25% is MC noise plus MATLAB's
+0.01-wide binning, which by construction reports the last bin *below* the
+crossing.
+
+### Found — `convexity_tree` still is not measuring convexity (bugs 1.13, 1.14)
+
+The 2026 release fixed the two lines this port had flagged and deviated from,
+so the open question was whether the port should now reproduce it. Run
+against the fixed version: no.
+
+`convexity_tree` meshgrids its terminal set against **itself**, so every
+unordered pair is tested twice and the `nS1` **self-pairs** are tested at all.
+A self-pair makes the intersection matrix singular — MATLAB prints *"Matrix
+is singular to working precision"* once per pair — and the resulting `NaN`
+fails every comparison, so the pair is recorded as *visible*. That puts a hard
+floor of `1 / nT` under the score. Compounding it, the boundary is built from
+the terminals, so every terminal lies **on** it and each segment "crosses" at
+its own endpoint.
+
+On `sample_tree` MATLAB returns 0.0384615, which is exactly `1/26` for its 26
+terminals: **all 26 pairs it scored as visible are self-pairs, and not one
+genuine pair survived.** Confirmed by re-running its loop and comparing the
+flagged indices against the diagonal. The port keeps its own estimator —
+unordered pairs, no self-pairs, containment against the space-filling hull,
+which terminals are inside rather than on — and returns 0.997.
+
+Separately, **`-dim2` does nothing**: `parseArgs` sets `dim2` true but leaves
+`dim3` at its default of true, and the function tests `pars.dim3` first.
+`convexity_tree(sample_tree, '-dim2')` silently returns the 3D answer; only
+the name-value form reaches the 2D branch (0.536 against 0.0384615).
+
+### Worth knowing — `inpolyhedron` needs consistently wound triangles
+
+Not a port bug, but it invalidated the first comparison attempted here and
+would invalidate anyone else's. `inpolyhedron` presumes face normals point
+outward. MATLAB's `boundary()` supplies that — on a convex hull its verdict
+agrees with `pointLocation` on all 20000 query points. The port's
+`_boundary_faces` does not, because nothing in the port ever reads a normal,
+and feeding its mesh to `inpolyhedron` reports **3.5x too many points inside,
+with no error at all**. Compare solids by volume or by
+`Delaunay.find_simplex`. Recorded in `scripts/matlab/README.md`.
+
+---
+
 ## 0.3.0 — 2026-09-09
 
 Round 5 of the review, plus a diff against the 2026 TREES release. **991

@@ -40,33 +40,60 @@ Round 4.
 
 ## 1. Highest value next — correctness the review can already name
 
-### 1.1 `boundary_tree` against MATLAB (Round 3)
+### 1.1 `boundary_tree` against MATLAB (Round 3) — **CLOSED, Round 6**
 
-The most concrete open correctness gap, and measurements already exist. From
-the 2026-08-28 differential session: enclosed volume is **exact** at shrink 0,
-~2% low at the default 0.5, and **16.7% low** at shrink ≈0.23 on a concave
-arbor (hsn). The reverse-engineered shrink → circumradius-cutoff curve is
-calibrated near the convex-hull end and drifts loose as shrink decreases.
+Resolved by reading `boundary.m` instead of reverse-engineering it. It is a
+readable m-file, not a built-in, and it does this:
 
-Four sub-items, in dependency order:
+```matlab
+shp       = alphaShape (P, Inf);
+Acritical = criticalAlpha (shp, 'one-region');
+Ahispec   = alphaSpectrum (shp);  Ahispec = Ahispec (Ahispec >= Acritical);
+shp.Alpha = Ahispec (numA + 1 - max (ceil ((1 - S) * numA), 1));
+```
 
-1. **Fit the shrink → alpha mapping** against MATLAB's `boundary()` on a grid
-   of shrink values across `sample`, `hsn` and a pyramidal cell. The reference
-   volumes are cheap to generate and the current curve is a guess.
-2. **Always produce a connected boundary.** Sparse sampling (pyramidal cells)
-   currently yields disconnected components; MATLAB does not.
-3. **Match MATLAB's region-selection thresholds**, and **recompute convexity
-   when it is not given**, as MATLAB does.
-4. **Simplify complex boundaries into same-volume equivalents**, which MATLAB
-   does automatically and the port does not (it returns the raw boundary).
+So the shrink factor picks a **rank** in the alpha spectrum — which for a 3D
+alpha shape is just the sorted tetrahedron circumradii — anchored at the
+critical alpha. The port already interpolated by rank; its one error was
+anchoring `shrink = 1` on `criticalAlpha(..., 'all-points')` (the smallest
+radius at which no point is left out) instead of `'one-region'` (the smallest
+at which the shape is also *connected*). The two coincide on `sample_tree` and
+`hss_tree`, which is why the error survived, and differ on `hsn_tree`
+(149.97 against 158.68) — moving every shrink factor and costing up to 5% of
+the volume.
 
-Knock-on: `dissectSholl_tree.V` inherits the error directly, `theta_mc_tree`
-and `r_mc_tree` inherit ~2% of it.
+`_one_region_cutoff` now computes MATLAB's number with a union-find over the
+points: adding a simplex merges its vertices, a point no simplex has reached
+is a component of its own, so "one region" is exactly "one component".
 
-**Prerequisite** for anyone reproducing this: `inpolyhedron.m` is a File
-Exchange dependency of `r_mc_tree`/`theta_mc_tree`/`growth_tree`'s `mc3d` and
-is **not installed on this machine**. A ray-casting shim was written for the
-August session; re-create it before running those harnesses.
+**Result: exact parity.** Identical enclosed volume (to every digit MATLAB
+prints), identical surface triangle count, and an identical inside/outside
+verdict on 20000 query points — for `sample_tree`, `hsn_tree` and `hss_tree`
+at shrink 0, 0.25, 0.5, 0.75 and 1, in 2D and 3D. Pinned in
+`tests/test_matlab_boundary.py`; regenerate with
+`scripts/matlab/run_boundary_validation.m`.
+
+The four sub-items this section listed are answered by that:
+
+1. ~~Fit the shrink → alpha mapping~~ — no fitting needed, the rule is
+   `boundary.m`'s and is now reproduced exactly.
+2. ~~Always produce a connected boundary~~ — the one-region anchor *is* the
+   connectivity requirement, and it is where MATLAB puts it.
+3. **Region-selection thresholds**: MATLAB sets `shp.HoleThreshold =
+   volume(shp)`, filling every interior void. On these cells there are none
+   (`volume` is identical filled and unfilled), so it never bites — but a
+   point cloud that did enclose a void would diverge. Still open, and now
+   precisely stated.
+4. **Simplifying complex boundaries** is `boundary_tree.m`'s own behaviour,
+   not `boundary()`'s, and remains unported.
+
+Knock-on, also measured: `r_mc_tree`'s observed `r0` matches MATLAB to every
+digit and its `R` to 0.1% at 400 Monte-Carlo iterations (the 1–2% seen at 20
+is the two samplers' noise, not bias). `theta_mc_tree` agrees to 0.25%, which
+is MC noise plus MATLAB's 0.01-wide binning. `dissectSholl_tree.V` inherits
+the now-exact volume.
+
+`inpolyhedron.m` was the prerequisite and is now in `scripts/matlab/`.
 
 ### 1.2 Empty-tree support beyond `delete_tree` (Round 2)
 

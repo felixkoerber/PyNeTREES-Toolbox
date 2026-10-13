@@ -1,10 +1,13 @@
 """V4: growing trees into a volume, and toy trees over random points.
 
-`growth_tree` cannot be diffed against MATLAB -- its target cloud comes
-from `boundary()`, which Octave does not implement, and the growth is
-driven by that cloud. So it is pinned against its own defining properties
-instead: what each parameter is supposed to do, and the invariants a grown
-morphology must satisfy however it was produced.
+`growth_tree` still cannot be diffed against MATLAB end to end: the growth
+is stochastic and the two sides draw their target clouds differently (this
+one samples the boundary's simplices directly, MATLAB fills the bounding
+cube and rejects with `inpolyhedron`). What *can* be checked is the volume
+those targets are drawn from, and it is -- exactly -- in
+`test_matlab_boundary.py`. So the growth itself is pinned against its own
+defining properties: what each parameter is supposed to do, and the
+invariants a grown morphology must satisfy however it was produced.
 """
 
 from __future__ import annotations

@@ -28,14 +28,17 @@ The one exception stands: MATLAB's ``dstats_tree`` is still not ported, for
 the reason above -- it is a figure, not an analysis.
 
 **Verification status.** ``sholl_tree``, ``vonMises_tree`` and ``bf_tree``
-are checked against MATLAB numerically. ``r_mc_tree`` and
-``dissectSholl_tree`` are **not**, and cannot be on this machine: both bottom
-out in MATLAB's built-in ``boundary()``, which Octave does not implement, so
-the differential harness used everywhere else has nothing to run. They are
-tested against the properties their statistics must have and against
-reference point sets with independently known answers (a uniform cloud must
-score R = 1, a lattice ~2), which is a weaker claim than "matches MATLAB"
-and is stated as such rather than glossed.
+are checked against MATLAB numerically, and so, since MATLAB R2026a was
+installed on the development machine, are ``r_mc_tree`` and
+``dissectSholl_tree`` -- both bottom out in ``boundary()``, which Octave
+does not implement, so until then the differential harness had nothing to
+run. ``r_mc_tree``'s observed nearest-neighbour distance ``r0`` matches to
+every digit; ``R`` is a Monte-Carlo estimate and lands within 0.1% of
+MATLAB's at 400 iterations, where the two samplers' noise has averaged out.
+They are *also* still tested against the properties their statistics must
+have and against reference point sets with independently known answers (a
+uniform cloud must score R = 1, a lattice ~2), which catches a class of
+error that agreeing with MATLAB does not.
 """
 
 from __future__ import annotations

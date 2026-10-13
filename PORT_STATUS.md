@@ -2538,3 +2538,62 @@ together (MATLAB's "corrected to match" note means the profile *attains*
 both, which this port already did); `plot_mpl_tree`/`dA_tree`, the integer
 `dim` convention and the absence of deprecation shims were all already
 correct from V1.
+
+
+---
+
+## Round 6 — 2026-09-09 (revalidating everything that depended on `inpolyhedron`)
+
+The user added the real `inpolyhedron.m` and asked for every function that
+depended on it to be revalidated. In MATLAB that is `r_mc_tree`,
+`theta_mc_tree` and `growth_tree`'s `mc3d` branch — plus the `fix_tree`
+family, which is not ported. All three reach it through `boundary()`, so
+`boundary_tree` and `convexity_tree` came with them.
+
+**Design Decision #75 — read `boundary.m` rather than fit a curve to it.**
+The August session treated MATLAB's shrink factor as a black box and
+reverse-engineered a shrink to circumradius-cutoff curve, which drifted up to
+17% on concave cells and left `boundary_tree` as the port's last
+"not verifiable against MATLAB" function. `boundary()` is not a built-in: it
+is an m-file in `toolbox/matlab/polyfun/`, and it states the rule outright —
+a rank within `alphaSpectrum`, anchored at `criticalAlpha(shp,
+'one-region')`. The lesson generalises past this function: check whether the
+MathWorks function is readable before modelling its behaviour from outputs.
+
+**Design Decision #76 — `shrink = 1` is the *one-region* critical alpha, not
+the *all-points* one.** The port anchored on "the smallest radius at which no
+point is left out". MATLAB anchors on "the smallest radius at which the shape
+is also connected", which is never smaller and is sometimes larger. The two
+coincide on `sample_tree` and `hss_tree` and differ on `hsn_tree` (149.97
+against 158.68) — which is why the error survived an earlier differential
+session that happened to use the wrong two cells. `_one_region_cutoff` gets
+MATLAB's number from a union-find over the points: a simplex merges its
+vertices, an unreached point is its own component, so "one region" is "one
+component" and both conditions fall out of one loop. Result: exact parity on
+volume, facet count and inside/outside verdict, in 2D and 3D, three cells,
+five shrink factors.
+
+**Design Decision #77 — do not adopt MATLAB's `convexity_tree`, even fixed.**
+The 2026 release corrected the two lines this port had deviated from, so the
+deviation could have been retired. Running it says otherwise: the pair loop
+meshgrids the terminal set against itself, and the resulting degenerate
+self-pairs always score as visible. On `sample_tree` the reported convexity
+*is* that artifact exactly (`1/26`), with zero genuine pairs surviving. The
+port's estimator — unordered pairs, no self-pairs, containment against the
+space-filling hull — is kept, and the reason is now measured rather than
+argued. MATLAB_TOOLBOX_BUGS.md 1.13; 1.14 covers `-dim2` never reaching the
+2D branch.
+
+**Confirmed, no change needed —** the port's exact simplex sampling agrees
+with MATLAB's rejection sampling end to end: `r_mc_tree`'s `r0` matches to
+every digit and its `R` to 0.1% at 400 Monte-Carlo iterations (the 1-2% at 20
+is sampler noise, and converging is what showed it), `theta_mc_tree` to
+0.25%. `growth_tree` remains unmatchable end to end because the growth is
+stochastic, but the volume its targets are drawn from is now exact.
+
+**A trap worth recording —** `inpolyhedron` requires consistently outward
+triangle winding. `boundary()` provides it; the port's `_boundary_faces` does
+not, because nothing in the port reads a normal. Round-tripping the port's
+mesh through `inpolyhedron` reports 3.5x too many points inside and raises
+nothing, which is how the first comparison run here produced nonsense. Noted
+in `scripts/matlab/README.md`.

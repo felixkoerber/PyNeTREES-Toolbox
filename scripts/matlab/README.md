@@ -15,6 +15,35 @@ MATLAB side, so neither can they be compared against.
 Put this on the MATLAB path (`addpath` this directory) before running any
 harness that touches them.
 
+## `run_boundary_validation.m`
+
+Captures MATLAB's own numbers for `boundary()` and for everything
+downstream of it, which is the part of the port that had no differential
+check for longest. Run it as
+
+```bash
+"C:/Program Files/MATLAB/R2026a/bin/matlab.exe" -batch   "addpath(genpath('<treestoolbox>')); addpath('<this dir>');    run_boundary_validation('<scratch dir>')"
+```
+
+after writing its input from Python:
+
+```python
+pt.save_mtr([pt.sample_tree(), pt.hsn_tree(), pt.hss_tree()],
+            scratch / "cells.mtr")
+```
+
+The values it prints are pinned in `tests/test_matlab_boundary.py`, so
+re-running it is how you check them against a different MATLAB release.
+
+**The one thing worth knowing before reading its output**: `boundary()`
+returns triangles wound consistently outward, and `inpolyhedron` requires
+exactly that. A mesh built without caring about winding -- which is what
+`pynetrees.density._boundary_faces` produces, since nothing in the port
+ever reads a normal -- makes `inpolyhedron` report roughly 3.5x too many
+points inside, silently. Compare solids by volume or by
+`Delaunay.find_simplex`, not by round-tripping the port's faces through
+`inpolyhedron`.
+
 ## Running a comparison
 
 MATLAB is driven headless:

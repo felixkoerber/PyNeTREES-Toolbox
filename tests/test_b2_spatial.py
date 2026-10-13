@@ -1,15 +1,17 @@
 """B2: `r_mc_tree` and `dissectSholl_tree`.
 
-Both rest on `boundary_tree`, hence on MATLAB's built-in ``boundary()``,
-which Octave does not implement -- so, as with `boundary_tree` and
-`convexity_tree` themselves, **no differential check against MATLAB was
-possible on this machine**. They are checked here against the properties
-their statistics must have, and against reference point sets whose answers
-are known independently of any implementation.
+Both rest on `boundary_tree`, hence on MATLAB's ``boundary()``, which Octave
+does not implement -- so for a long time no differential check was possible.
+It is now: see `test_matlab_boundary.py` for the boundary itself, and
+`r_mc_tree`'s docstring for the end-to-end numbers (``r0`` matches MATLAB to
+every digit; ``R`` is a Monte-Carlo estimate and agrees to 0.1% once there
+are enough iterations for the two samplers' noise to average out).
 
-The `r_mc_tree` tests lean on that second kind: the Clark-Evans ratio has
-known limits for a Poisson cloud (1) and for a lattice (~2), which pin the
-estimator without needing MATLAB at all.
+The tests here are the other kind, and are kept because agreeing with MATLAB
+does not catch what they catch: the properties these statistics must have,
+and reference point sets whose answers are known independently of any
+implementation. The Clark-Evans ratio has known limits for a Poisson cloud
+(1) and for a lattice (~2), which pin the estimator on its own.
 """
 
 from __future__ import annotations

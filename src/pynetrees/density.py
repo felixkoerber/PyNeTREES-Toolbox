@@ -666,19 +666,20 @@ def boundary_tree(tree: Tree, shrink: float | None = None,
     but it does subdivide the empty pockets between branches into simplices
     small enough to survive the threshold, so the boundary loosens.
     Resampling `hsn_tree` to 1 um leaves its convex hull unchanged while
-    this grows from 30% to 49% of it. Comparisons across cells therefore
+    this grows from 31% to 49% of it. Comparisons across cells therefore
     need a common sampling rate; :func:`pynetrees.theta_mc_tree`,
     :func:`pynetrees.r_mc_tree` and :func:`pynetrees.scaleV_tree` all inherit
     this.
 
-    **Not verifiable against MATLAB here.** MATLAB's `boundary_tree` calls
-    its built-in ``boundary()``, which Octave does not implement, so no
-    differential check was possible on this machine. The algorithm below is
-    the standard alpha-shape construction that ``boundary()`` documents
-    itself as performing -- Delaunay triangulation with simplices discarded
-    above a circumradius cutoff -- but the exact mapping from shrink factor
-    to cutoff is undocumented on MATLAB's side, so **boundary vertices will
-    not match theirs exactly**.
+    **Verified against MATLAB.** ``boundary.m`` is a readable m-file, not a
+    built-in, so the shrink factor is not guesswork after all: it selects a
+    rank within ``alphaSpectrum``, anchored at
+    ``criticalAlpha (shp, 'one-region')``. Reproducing that exactly puts
+    this function on MATLAB's numbers -- identical enclosed volume, identical
+    surface triangle count and an identical inside/outside verdict on 20000
+    query points, for `sample_tree`, `hsn_tree` and `hss_tree` at shrink
+    0, 0.25, 0.5, 0.75 and 1, in both 2D and 3D. See
+    ``tests/test_matlab_boundary.py``, which pins MATLAB's own output.
 
     Separately, MATLAB's `boundary_tree` cannot run at all unless ``c`` is
     passed: its default branch does ``pars = convexity_tree (...)``, which
@@ -725,27 +726,25 @@ def _alpha_shape(coords: np.ndarray, shrink: float) -> Boundary:
     triangulation = Delaunay(coords)
     radii = _circumradii(coords, triangulation.simplices)
 
-    # MATLAB documents the two endpoints: shrink 0 is the convex hull, and
-    # shrink 1 is "the tightest region that envelops the points" -- note
-    # *envelops*, so even the tightest shape still contains every point.
-    # So the family is interpolated between those two, rather than by
-    # sliding a raw quantile: a quantile cutoff hits a shape that abandons
-    # most of the tree long before shrink reaches 1 (at shrink=1 it kept a
-    # 4-vertex sliver of a 197-node cell).
-    tightest = _tightest_enveloping_cutoff(triangulation.simplices, radii,
-                                           len(coords))
+    # This is MATLAB's `boundary.m`, which is a readable m-file and says
+    # exactly what it does. A simplex enters the shape when the probing
+    # sphere is at least as large as its circumsphere, so the set of
+    # circumradii *is* `alphaSpectrum`; the shrink factor picks a rank
+    # within the part of that spectrum at or above a critical radius, and
+    # `shrink = 1` lands on the critical radius itself.
+    spectrum = np.unique(radii)
+    critical = _one_region_cutoff(triangulation.simplices, radii, len(coords))
+    above = spectrum[spectrum >= critical]
 
-    # Interpolate by *rank* rather than by radius. The circumradii are
-    # heavily skewed -- a handful of slivers spanning the arbor's concavities
-    # are orders of magnitude larger than the rest -- so interpolating the
-    # cutoff linearly in radius leaves the shape indistinguishable from the
-    # convex hull until shrink is past 0.9, and then collapses it all at
-    # once. Walking the sorted radii instead spreads the family evenly
-    # across [0, 1] while still hitting both documented endpoints exactly.
-    order = np.sort(radii)
-    last = len(order) - 1
-    first = int(np.searchsorted(order, tightest, side="left"))
-    cutoff = order[int(round(last + shrink * (first - last)))]
+    if above[-1] - critical < 1e-3 * above[-1]:
+        # `boundary.m` gives up on the whole family when the usable part of
+        # the spectrum is narrower than a thousandth of its top -- there is
+        # nothing to interpolate over -- and returns the convex hull for
+        # every shrink factor.
+        cutoff = np.inf
+    else:
+        rank = max(int(np.ceil((1.0 - shrink) * len(above))), 1)
+        cutoff = above[rank - 1]
     keep = triangulation.simplices[radii <= cutoff]
 
     faces = _boundary_faces(keep)
@@ -831,25 +830,49 @@ def _sample_in_simplices(points: np.ndarray, simplices: np.ndarray,
     return np.einsum("nk,nkd->nd", bary, points[chosen])
 
 
-def _tightest_enveloping_cutoff(simplices: np.ndarray, radii: np.ndarray,
-                                n_points: int) -> float:
-    """Smallest circumradius cutoff whose simplices still cover every point.
+def _one_region_cutoff(simplices: np.ndarray, radii: np.ndarray,
+                       n_points: int) -> float:
+    """Smallest circumradius at which the alpha shape is a *single region*.
 
-    Adding simplices smallest-first, this is the radius at which the last
-    uncovered point gets picked up -- the tightest alpha shape that still
-    envelops the whole set, which is what MATLAB's shrink factor of 1 is
-    documented to produce.
+    MATLAB's ``criticalAlpha (shp, 'one-region')``, which is what
+    `boundary.m` anchors its shrink factor on and therefore what
+    ``shrink = 1`` means.
+
+    Two conditions have to hold at once -- every point is part of the shape,
+    and the shape is connected -- and a union-find over the points is both
+    of them in one: adding a simplex merges its vertices into one component,
+    and a point no simplex has reached yet is still a component of its own.
+    So "one region" is exactly "one component", and the radius at which that
+    happens is the critical alpha.
+
+    Notes
+    -----
+    Not the same as ``criticalAlpha (shp, 'all-points')``, the smallest
+    radius at which no point is left out. That one is reached first -- a
+    shape can cover every point while still lying in two disconnected
+    lobes -- and using it made the tightest boundary too tight. On
+    `hsn_tree` the two differ (149.97 against 158.68), which moved every
+    shrink factor and cost up to 5% of the volume; on `sample_tree` and
+    `hss_tree` they coincide, which is why the error went unseen.
     """
-    covered = np.zeros(n_points, dtype=bool)
-    cutoff = 0.0
+    parent = np.arange(n_points)
+
+    def find(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return int(node)
+
+    components = n_points
     for index in np.argsort(radii):
-        simplex = simplices[index]
-        if not covered[simplex].all():
-            covered[simplex] = True
-            cutoff = float(radii[index])
-            if covered.all():
-                break
-    return cutoff
+        roots = {find(vertex) for vertex in simplices[index]}
+        keep = roots.pop()
+        for other in roots:
+            parent[other] = keep
+            components -= 1
+        if components == 1:
+            return float(radii[index])
+    return float(radii.max())
 
 
 def _circumradii(points: np.ndarray, simplices: np.ndarray) -> np.ndarray:
@@ -960,10 +983,42 @@ def convexity_tree(tree: Tree, thr: float = 25.0, nodes=None,
     **space-filling hull**, and with the containment test cast as one ray
     per pair rather than a vendored point-in-mesh routine.
 
-    A numeric comparison against the fixed MATLAB version is tracked in
-    WORK_PLAN.md; the residual difference is expected to be the
-    shrink-to-alpha mapping documented on :func:`boundary_tree`, not the
-    sign.
+    **The numeric comparison has now been run, and the fixed MATLAB version
+    still does not measure convexity.** Two defects survive the 2026 fix,
+    both in the pair loop rather than in the two lines that changed:
+
+    3. It iterates ``meshgrid`` over ``1:nS1`` by ``1:nS2`` with *the same*
+       point set, so every unordered pair is tested twice and, worse, the
+       ``nS1`` **self-pairs** ``va == vb`` are tested too. A self-pair makes
+       the intersection matrix singular -- MATLAB prints "Matrix is singular
+       to working precision" for each one -- and the resulting ``NaN``
+       fails every ``>=``/``<=``, so the pair is recorded as *visible*. The
+       score therefore has a hard floor of ``1 / nS1`` that has nothing to
+       do with the shape.
+    4. The boundary is built from the terminals, so every terminal lies
+       **on** the surface, and the test accepts an intersection at
+       ``X(1) == 0``. Each segment therefore "crosses" at its own endpoint.
+
+    Together those are not a small bias. On `sample_tree` MATLAB returns
+    0.0384615, which is exactly ``1 / 26`` for its 26 terminals: **all 26
+    pairs it scored as visible are the degenerate self-pairs, and not one
+    genuine pair survived**. That was checked by re-running its loop and
+    comparing the flagged indices against the diagonal. `hsn_tree` returns
+    0.237444, where the floor is only ``1 / 224``, so there the artifact
+    merely inflates rather than dominates.
+
+    This port keeps its own estimator: pairs are unordered and exclude
+    self-pairs, and containment is measured against the **space-filling
+    hull** -- within ``thr`` of some cable -- which the terminals are inside
+    rather than on. It returns 0.997 for `sample_tree`, i.e. an almost
+    perfectly convex arbor, and 0.766 for `hsn_tree`.
+
+    A third defect worth knowing if you run the MATLAB version: **``-dim2``
+    does nothing.** ``parseArgs`` sets ``dim2`` true but leaves ``dim3`` at
+    its default, also true, and the function tests ``if pars.dim3`` first --
+    so ``convexity_tree (tree, '-dim2')`` silently returns the 3D answer.
+    Only the name-value form ``(tree, 'dim2', true, 'dim3', false)``
+    reaches the 2D branch. All three are recorded in MATLAB_TOOLBOX_BUGS.md.
     """
     generator = np.random.default_rng(rng)
     if nodes is None:
@@ -1265,7 +1320,7 @@ def theta_mc_tree(tree: Tree, n: int = 100_000, alpha: float = 0.5, *,
     empty pockets between branches into simplices small enough to be kept,
     so the boundary *loosens*. Resampling `hsn_tree` to 1 um leaves its
     convex hull unchanged (6.21e6 um^3) while the ``alpha = 0.5`` boundary
-    goes from 30% to 49% of it, and theta with it from 24 um to 48 um.
+    goes from 31% to 49% of it, and theta with it from 24 um to 48 um.
     Nothing about the morphology changed. Resample every cell in a
     comparison to a common rate first -- or use :func:`theta_tree`, whose
     one-micron grid does not have this sensitivity.

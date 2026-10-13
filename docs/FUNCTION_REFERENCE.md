@@ -3072,14 +3072,15 @@ need a common sampling rate; :func:`pynetrees.theta_mc_tree`,
 :func:`pynetrees.r_mc_tree` and :func:`pynetrees.scaleV_tree` all inherit
 this.
 
-**Not verifiable against MATLAB here.** MATLAB's `boundary_tree` calls
-its built-in ``boundary()``, which Octave does not implement, so no
-differential check was possible on this machine. The algorithm below is
-the standard alpha-shape construction that ``boundary()`` documents
-itself as performing -- Delaunay triangulation with simplices discarded
-above a circumradius cutoff -- but the exact mapping from shrink factor
-to cutoff is undocumented on MATLAB's side, so **boundary vertices will
-not match theirs exactly**.
+**Verified against MATLAB.** ``boundary.m`` is a readable m-file, not a
+built-in, so the shrink factor is not guesswork after all: it selects a
+rank within ``alphaSpectrum``, anchored at
+``criticalAlpha (shp, 'one-region')``. Reproducing that exactly puts
+this function on MATLAB's numbers -- identical enclosed volume, identical
+surface triangle count and an identical inside/outside verdict on 20000
+query points, for `sample_tree`, `hsn_tree` and `hss_tree` at shrink
+0, 0.25, 0.5, 0.75 and 1, in both 2D and 3D. See
+``tests/test_matlab_boundary.py``, which pins MATLAB's own output.
 
 Separately, MATLAB's `boundary_tree` cannot run at all unless ``c`` is
 passed: its default branch does ``pars = convexity_tree (...)``, which
@@ -3168,10 +3169,42 @@ against a boundary mesh, which this does too -- but against the
 **space-filling hull**, and with the containment test cast as one ray
 per pair rather than a vendored point-in-mesh routine.
 
-A numeric comparison against the fixed MATLAB version is tracked in
-WORK_PLAN.md; the residual difference is expected to be the
-shrink-to-alpha mapping documented on :func:`boundary_tree`, not the
-sign.
+**The numeric comparison has now been run, and the fixed MATLAB version
+still does not measure convexity.** Two defects survive the 2026 fix,
+both in the pair loop rather than in the two lines that changed:
+
+3. It iterates ``meshgrid`` over ``1:nS1`` by ``1:nS2`` with *the same*
+   point set, so every unordered pair is tested twice and, worse, the
+   ``nS1`` **self-pairs** ``va == vb`` are tested too. A self-pair makes
+   the intersection matrix singular -- MATLAB prints "Matrix is singular
+   to working precision" for each one -- and the resulting ``NaN``
+   fails every ``>=``/``<=``, so the pair is recorded as *visible*. The
+   score therefore has a hard floor of ``1 / nS1`` that has nothing to
+   do with the shape.
+4. The boundary is built from the terminals, so every terminal lies
+   **on** the surface, and the test accepts an intersection at
+   ``X(1) == 0``. Each segment therefore "crosses" at its own endpoint.
+
+Together those are not a small bias. On `sample_tree` MATLAB returns
+0.0384615, which is exactly ``1 / 26`` for its 26 terminals: **all 26
+pairs it scored as visible are the degenerate self-pairs, and not one
+genuine pair survived**. That was checked by re-running its loop and
+comparing the flagged indices against the diagonal. `hsn_tree` returns
+0.237444, where the floor is only ``1 / 224``, so there the artifact
+merely inflates rather than dominates.
+
+This port keeps its own estimator: pairs are unordered and exclude
+self-pairs, and containment is measured against the **space-filling
+hull** -- within ``thr`` of some cable -- which the terminals are inside
+rather than on. It returns 0.997 for `sample_tree`, i.e. an almost
+perfectly convex arbor, and 0.766 for `hsn_tree`.
+
+A third defect worth knowing if you run the MATLAB version: **``-dim2``
+does nothing.** ``parseArgs`` sets ``dim2`` true but leaves ``dim3`` at
+its default, also true, and the function tests ``if pars.dim3`` first --
+so ``convexity_tree (tree, '-dim2')`` silently returns the 3D answer.
+Only the name-value form ``(tree, 'dim2', true, 'dim3', false)``
+reaches the 2D branch. All three are recorded in MATLAB_TOOLBOX_BUGS.md.
 
 An **empty tree** gives an empty result rather than an error -- see
 :mod:`pynetrees._empty`.

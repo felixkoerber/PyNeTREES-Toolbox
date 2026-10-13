@@ -324,9 +324,89 @@ and `c = nnz(Inds) / (nS1 * nS2)`, which is what the port had independently
 concluded the function was meant to compute.
 
 **Python port**: `convexity_tree` already measured the fixed quantity and
-documented why. Its Notes now record that upstream agrees; the remaining
-difference is the estimator (space-filling hull, one ray cast per pair) and
-the shrink-to-alpha mapping tracked on `boundary_tree`, not the definition.
+documented why. Its Notes now record that upstream agrees on the
+*definition* — but see 1.13, which is what the numeric re-validation turned
+up once the fixed version could actually be run.
+
+---
+
+### 1.13 `convexity_tree` — the 2026 fix leaves the score dominated by degenerate self-pairs
+
+**File**: `metrics/convexity_tree.m:57-101` (3D branch; the 2D branch has
+the same structure)
+
+Found by re-running the *fixed* 2026 version against the port, which is
+what made the size of the problem visible.
+
+```matlab
+S1 = [X, Y, Z];              % terminals
+S2 = [X, Y, Z];              % ... the same terminals
+[sM1, sM2] = meshgrid(sV1, sV2);
+```
+
+The pair loop runs over the full `nS1 * nS2` grid of a point set against
+itself. Two things follow.
+
+**Every unordered pair is tested twice, and the `nS1` self-pairs are tested
+at all.** When `va == vb` the first column of the intersection matrix `M`
+is all zeros, so `M \ V` is singular — MATLAB prints *"Matrix is singular to
+working precision"* once per self-pair — and the resulting `NaN`s fail every
+`>=` and `<=` test, so `t` stays 1 and the pair is recorded as **visible**.
+The score therefore carries a hard floor of `1 / nS1`.
+
+**And the terminals lie on the boundary**, because the boundary is built
+from those very terminals. The test accepts an intersection at `X(1) == 0`,
+so each segment "crosses the surface" at its own endpoint.
+
+The two together are not a small bias:
+
+| tree | terminals | MATLAB `convexity_tree` | `1 / nT` |
+|---|---|---|---|
+| `sample_tree` | 26 | 0.0384615 | 0.0384615 |
+| `hsn_tree` | 224 | 0.237444 | 0.00446 |
+
+On `sample_tree` the reported convexity **is** the floor, exactly. Checking
+the flagged indices against the diagonal confirms it: all 26 pairs scored as
+visible are self-pairs, and not one genuine pair survived the test.
+
+**Python port**: pairs are unordered and exclude self-pairs, and
+containment is tested against the space-filling hull — within `thr` of some
+cable — which the terminals are *inside* rather than on. `sample_tree`
+scores 0.997, `hsn_tree` 0.766.
+
+---
+
+### 1.14 `convexity_tree` — the `-dim2` option is ignored
+
+**File**: `metrics/convexity_tree.m:41-46`
+
+```matlab
+p.addParameter('dim2', false, @isBinary)
+p.addParameter('dim3', true,  @isBinary)
+pars = parseArgs(p, varargin, {}, {'dim2', 'dim3'});
+...
+if pars.dim3 % 3d case
+```
+
+`parseArgs` turns the flag string `'-dim2'` into the name-value pair
+`'dim2', true` and passes nothing for `dim3`, which keeps its default of
+`true`. The function then tests `pars.dim3` first, so the 3D branch always
+wins:
+
+```
+convexity_tree(sample_tree, '-dim2')                    -> 0.0384615
+convexity_tree(sample_tree, '-dim3')                    -> 0.0384615
+convexity_tree(sample_tree, 'dim2', true, 'dim3', false) -> 0.536
+```
+
+The two flags are mutually exclusive but nothing enforces it, and the
+defaults make the exclusive pair unreachable through the documented flag
+syntax. The docstring advertises `'-dim2'` and its own header warns
+*"Careful, it used to be '-2d'"*, so the rename landed while the dispatch
+did not.
+
+**Python port**: `dim` is an integer, `2` or `3`, with no second parameter
+that can contradict it.
 
 ---
 
@@ -480,7 +560,7 @@ Design Decision #27.
 
 | Category | Count | Typical fix in the Python port |
 |---|---|---|
-| Confirmed logic bugs | 30 | Redesigned around the bug (not replicated) |
+| Confirmed logic bugs | 32 | Redesigned around the bug (not replicated) |
 | Self-acknowledged incomplete features | 12 | Either fixed, or explicitly not ported (documented) |
 | Numerical robustness gaps | 2 | Explicit clamping / correct distance metric |
 | Performance bottlenecks (self-documented) | 2 | Vectorized / replaced with a standard algorithm + library |

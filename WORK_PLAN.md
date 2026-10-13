@@ -28,8 +28,18 @@ path. Goes to `MATLAB_TOOLBOX_BUGS.md`.
 
 - [x] A1. Record the diff; fix `scale_factor` default; rewrite the
   `convexity_tree` note now that it describes a fixed bug.
-- [ ] A2. Re-validate `convexity_tree` against the new MATLAB. Now possible:
-  the real `inpolyhedron.m` has been added, replacing the ray-casting shim.
+- [x] A2. Re-validate `convexity_tree` against the new MATLAB — done in
+  round 6, together with everything else that depends on `inpolyhedron`.
+  Two findings. **The boundary is now exact**: `boundary.m` turned out to be
+  a readable m-file, the port was anchoring `shrink = 1` on the wrong
+  critical alpha, and fixing that puts `boundary_tree` on MATLAB's numbers
+  digit for digit (see REVIEW_ROADMAP.md 1.1). **`convexity_tree` is still
+  not worth matching**: the 2026 fix corrected the two lines this port had
+  flagged, but the pair loop tests every point against itself, and those
+  degenerate self-pairs always score as visible — on `sample_tree` the
+  reported 0.0384615 is exactly `1/26` and *not one genuine pair* survived.
+  Recorded as MATLAB_TOOLBOX_BUGS.md 1.13, with 1.14 for `-dim2` never
+  reaching the 2D branch.
 
 ## B. API consistency — one batch, one test pass
 
