@@ -292,6 +292,7 @@ def insert_mechanism(
     *,
     nodes=None,
     origin: int | None = None,
+    only_nodes: bool = False,
     **params,
 ):
     """Insert a NEURON mechanism (e.g. ``"hh"``) on part of the model.
@@ -315,6 +316,14 @@ def insert_mechanism(
     origin : int, optional
         Node the distances passed to a callable parameter are measured
         from. Defaults to the tree's root.
+    only_nodes : bool, default False
+        Requires ``nodes``. NEURON inserts a mechanism per section, so by
+        default every segment of the sections holding ``nodes`` is affected.
+        With ``True`` the parameters are set only on the segments containing
+        those nodes, and elsewhere in a section that did not already have the
+        mechanism the named parameters are set to 0. Name the mechanism's
+        conductance among ``params``, or it keeps its default in those
+        segments.
     **params
         Parameter values, each either
 
@@ -339,9 +348,23 @@ def insert_mechanism(
     """
     from neuron import h
 
+    if only_nodes and nodes is None:
+        raise ValueError("only_nodes=True needs nodes=")
+    if only_nodes and not params:
+        raise ValueError("only_nodes=True needs at least one parameter to set")
+
     sections = _target_sections(model, region, nodes)
     if not sections:
         return
+
+    chosen = None
+    if only_nodes:
+        chosen = {}
+        for node in np.atleast_1d(np.asarray(nodes, dtype=int)).tolist():
+            sec = model.node_section[node]
+            index = min(int(model.node_x[node] * sec.nseg), sec.nseg - 1)
+            chosen.setdefault(sec.name(), set()).add(index)
+    already_had = {sec.name(): sec.has_membrane(mechanism) for sec in sections}
 
     for sec in sections:
         sec.insert(mechanism)
@@ -362,8 +385,13 @@ def insert_mechanism(
             )
 
     for sec in sections:
-        for seg in sec:
+        for index, seg in enumerate(sec):
             target = getattr(seg, mechanism)
+            if chosen is not None and index not in chosen.get(sec.name(), ()):
+                if not already_had[sec.name()]:
+                    for name in params:
+                        setattr(target, name, 0.0)
+                continue
             for name, value in uniform.items():
                 setattr(target, name, value)
             if not ranged:

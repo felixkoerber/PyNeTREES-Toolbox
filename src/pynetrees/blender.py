@@ -110,7 +110,8 @@ def reset_scene() -> None:
 def build_tree(tree: Tree, name: str | None = None, *,
                region_colors: dict | None = None, resolution: int = 8,
                taper: bool = True, min_diameter: float = 0.1,
-               reset: bool = True, offset=(0.0, 0.0, 0.0)) -> list:
+               reset: bool = True, offset=(0.0, 0.0, 0.0),
+               stepped=("spine",)) -> list:
     """Build a tree as Blender curve objects, one per region.
 
     Parameters
@@ -137,11 +138,18 @@ def build_tree(tree: Tree, name: str | None = None, *,
     offset : (dx, dy, dz), default (0, 0, 0)
         Shift the tree, for laying several out in one scene -- pair with
         :func:`~pynetrees.spread_tree`.
+    stepped : sequence of str, default ('spine',)
+        Regions drawn as separate cylinders, each with its end node's
+        diameter, instead of tapering smoothly from node to node. Names are
+        matched case-insensitively and by substring. The default keeps a
+        spine's thin neck and wide head distinct, which a linear taper would
+        turn into a cone. Pass ``()`` to taper every region. Has no effect
+        with ``taper=False``.
 
     Returns
     -------
     list
-        The created ``bpy`` objects, one per region.
+        The created ``bpy`` objects, one per region. Tube ends are closed.
     """
     bpy = _bpy()
     if reset:
@@ -167,17 +175,25 @@ def build_tree(tree: Tree, name: str | None = None, *,
         curve.dimensions = "3D"
         curve.bevel_depth = largest
         curve.bevel_resolution = int(resolution)
+        # without caps the tubes are open shells: hollow tips up close, and
+        # torn sheets if the curves are later voxel-remeshed into a surface
+        curve.use_fill_caps = True
+        lowered = str(label).lower()
+        as_cylinders = taper and any(key.lower() in lowered for key in stepped)
         # `radius` is a *fraction* of bevel_depth, so normalising here is
         # what makes a node's diameter come out in the tree's own units
         for nodes in sections:
+            if as_cylinders:
+                points, widths = _cylinder_points(coords, radii, nodes)
+            else:
+                points = coords[nodes]
+                widths = radii[nodes] if taper else np.full(len(nodes), radii.mean())
             spline = curve.splines.new("POLY")
-            spline.points.add(len(nodes) - 1)
-            for slot_index, node in enumerate(nodes):
+            spline.points.add(len(points) - 1)
+            for slot_index, (xyz, width) in enumerate(zip(points, widths)):
                 point = spline.points[slot_index]
-                point.co = (*coords[node], 1.0)
-                point.radius = (
-                    radii[node] / largest if taper else radii.mean() / largest
-                )
+                point.co = (*xyz, 1.0)
+                point.radius = width / largest
 
         obj = bpy.data.objects.new(f"{name}_{label}", curve)
         obj.data.materials.append(
@@ -210,6 +226,22 @@ def _region_splines(tree: Tree, regions: np.ndarray, index: int) -> list:
             continue
         out.append(nodes.tolist())
     return out
+
+
+def _cylinder_points(coords: np.ndarray, radii: np.ndarray, nodes: list):
+    """Control points that draw a section as one cylinder per segment.
+
+    Each segment gets the radius of its end node, which is what a ``Tree``
+    with ``frustum=False`` means. Blender interpolates radius between control
+    points, so every segment needs its own pair of them. A later segment
+    starts a tiny way along itself, because two control points at the same
+    place give the curve no direction to sweep along.
+    """
+    starts, ends = coords[nodes[:-1]].copy(), coords[nodes[1:]]
+    starts[1:] += 1e-3 * (ends[1:] - starts[1:])
+    points = np.empty((2 * len(starts), 3))
+    points[0::2], points[1::2] = starts, ends
+    return points, np.repeat(radii[nodes[1:]], 2)
 
 
 def _color(label: str, palette: dict, slot: int):
@@ -333,10 +365,12 @@ def _frame(trees, view: str, margin: float, background, size) -> None:
 
     # Blender's `ortho_scale` is the view's *larger* dimension, so the
     # shorter screen axis has to be scaled by the aspect ratio or it gets
-    # cropped -- which is what a tall cell in a wide frame does.
+    # cropped. `max` gives the width the view needs; in a portrait frame the
+    # width is the shorter side, hence the division.
     horizontal, vertical = {"xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}[view]
     aspect = size[0] / size[1]
-    extent = max(spans[horizontal], spans[vertical] * aspect, 1.0) * margin
+    extent = (max(spans[horizontal], spans[vertical] * aspect, 1.0) * margin
+              / min(aspect, 1.0))
     distance = depth * 2 + extent + 10.0
 
     directions = {"xy": (0, 0, 1), "xz": (0, -1, 0), "yz": (1, 0, 0)}

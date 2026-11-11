@@ -14,8 +14,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import pynetrees as pt
 from pynetrees import (
     B_tree,
+    T_tree,
     Tree,
     idpar_tree,
     load_neurolucida,
@@ -68,48 +70,68 @@ _SYNTHETIC_ASC = """\
 
 def test_load_neurolucida_synthetic_topology_and_regions(tmp_path):
     asc = tmp_path / "synthetic.asc"
-    asc.write_text(_SYNTHETIC_ASC)
+    asc.write_text(_SYNTHETIC_ASC.replace("(1.0 0.0 0.0 2.0)", "(20.0 0.0 0.0 2.0)"))
 
-    trees = load_neurolucida(asc, repair=False)
-    assert isinstance(trees, list)
-    assert len(trees) == 2  # CellBody + Dendrite; marker block excluded
+    tree = load_neurolucida(asc, repair=False)
+    assert isinstance(tree, Tree)
+    assert set(tree.rnames) == {"CellBody", "Dendrite"}
+    assert ver_tree(tree, quiet=True) == []
 
-    by_region = {t.rnames[0]: t for t in trees if len(t.rnames) == 1}
-    soma = by_region["CellBody"]
-    assert soma.n_nodes == 2
-    np.testing.assert_allclose(soma.X, [0.0, 1.0])
-
-    dend = by_region["Dendrite"]
-    assert dend.n_nodes == 6
-    assert ver_tree(dend, quiet=True) == []
-    assert B_tree(dend).sum() == 1  # exactly one branch point, from the split
-
-    # branch point is node 1 (path length 10 along X); its two children
-    # should be the (20, 5, 0) and (20, -5, 0) points
-    idpar = idpar_tree(dend, root_self=False)
-    branch_node = int(np.flatnonzero(B_tree(dend))[0])
-    assert dend.X[branch_node] == pytest.approx(10.0)
-    children = np.flatnonzero(idpar == branch_node)
-    np.testing.assert_allclose(sorted(dend.Y[children].tolist()), [-5.0, 5.0])
+    # the soma is a chain along the contour, the dendrite joined onto it
+    assert int(np.isclose(tree.X, 10.0).sum()) >= 1
+    dendrite = tree.region_nodes("Dendrite")
+    assert int(dendrite.sum()) == 6
+    assert int((B_tree(tree) & dendrite).sum()) == 1
+    assert sorted(tree.Y[dendrite & T_tree(tree)].tolist()) == [-5.0, 5.0]
 
 
-def test_load_neurolucida_excludes_marker_blocks(tmp_path):
+def test_load_neurolucida_returns_markers_and_contours(tmp_path):
     asc = tmp_path / "synthetic.asc"
-    asc.write_text(_SYNTHETIC_ASC)
-    trees = load_neurolucida(asc, repair=False)
-    for t in trees:
-        marker_point = np.isclose(t.X, 5.0) & np.isclose(t.Y, 5.0) & np.isclose(t.Z, 5.0)
-        assert not marker_point.any()
+    asc.write_text(_SYNTHETIC_ASC.replace("(1.0 0.0 0.0 2.0)", "(20.0 0.0 0.0 2.0)"))
+    result = load_neurolucida(asc, repair=False, full_output=True)
+    np.testing.assert_allclose(result.markers, [[5.0, 5.0, 5.0, 0.1]])
+    assert [c["name"] for c in result.contours] == ["CellBody"]
+    marker_point = (np.isclose(result.trees.X, 5.0) & np.isclose(result.trees.Y, 5.0)
+                    & np.isclose(result.trees.Z, 5.0))
+    assert not marker_point.any()
+
+
+def test_load_neurolucida_reads_spines(tmp_path):
+    asc = tmp_path / "spiny.asc"
+    asc.write_text("""\
+( (Dendrite)
+  (0.0 0.0 0.0 1.0)
+  (10.0 0.0 0.0 1.0)
+  <(10.0 2.0 0.0 0.5)>
+  (20.0 0.0 0.0 1.0)
+)
+""")
+    tree = load_neurolucida(asc, repair=False)
+    spines = tree.region_nodes("spines")
+    assert int(spines.sum()) == 1
+    parent = pt.idpar_tree(tree)[np.flatnonzero(spines)[0]]
+    assert tree.X[parent] == 10.0 and tree.Y[parent] == 0.0
+
+
+def test_load_neurolucida_one_soma_keeps_the_largest(tmp_path):
+    asc = tmp_path / "two.asc"
+    contour = """("CellBody" (CellBody)
+ (0.0 {y} 0.0 1.0) ({L} {y} 0.0 1.0) ({L} {w} 0.0 1.0) (0.0 {w} 0.0 1.0) (0.0 {y} 0.0 1.0))
+"""
+    asc.write_text(contour.format(y=0.0, w=4.0, L=12.0)
+                   + contour.format(y=100.0, w=130.0, L=60.0))
+    assert len(load_neurolucida(asc, repair=False)) == 2
+    tree = load_neurolucida(asc, repair=False, one_soma=True)
+    assert isinstance(tree, Tree) and tree.Y.max() > 50.0
 
 
 def test_load_neurolucida_repair_produces_binary_tree(tmp_path):
     asc = tmp_path / "synthetic.asc"
-    asc.write_text(_SYNTHETIC_ASC)
-    trees = load_neurolucida(asc, repair=True)
-    dend = next(t for t in trees if t.rnames == ["Dendrite"])
-    children_count = np.asarray(dend.dA.sum(axis=0)).ravel()
+    asc.write_text(_SYNTHETIC_ASC.replace("(1.0 0.0 0.0 2.0)", "(20.0 0.0 0.0 2.0)"))
+    tree = load_neurolucida(asc, repair=True)
+    children_count = np.asarray(tree.dA.sum(axis=0)).ravel()
     assert children_count.max() <= 2
-    assert ver_tree(dend, quiet=True) == []
+    assert ver_tree(tree, quiet=True) == []
 
 
 # ---------------------------------------------------------------------------
@@ -120,16 +142,12 @@ def test_load_neurolucida_repair_produces_binary_tree(tmp_path):
 @pytest.mark.skipif(not SAMPLE_ASC.exists(), reason="bundled sample .ASC not found")
 def test_load_neurolucida_real_sample_file():
     trees = load_neurolucida(SAMPLE_ASC, repair=False)
-    assert isinstance(trees, list)
-    # 2 CellBody contours, 2 Axon, 2 Dendrite, 2 Apical -- the marker
-    # (FilledUpTriangle) and Thumbnail/ImageCoords blocks must be excluded
-    regions = sorted(t.rnames[0] for t in trees)
-    assert regions == sorted(
-        ["CellBody", "CellBody", "Axon", "Axon", "Dendrite", "Dendrite", "Apical", "Apical"]
-    )
+    # two cells, each a soma with its apical, axon and (for one) basal trees
+    assert isinstance(trees, list) and len(trees) == 2
+    assert set(trees[0].rnames) == {"Apical", "Axon", "CellBody", "Dendrite"}
+    assert set(trees[1].rnames) == {"Apical", "Axon", "CellBody"}
     for t in trees:
         assert ver_tree(t, quiet=True) == []
-        assert t.n_nodes > 0
 
 
 @pytest.mark.skipif(not SAMPLE_ASC.exists(), reason="bundled sample .ASC not found")

@@ -171,9 +171,10 @@ tree, connected = MST_tree(pts[:, 0], pts[:, 1], pts[:, 2], bf=0.4, full_output=
 
 > **Gotcha:** `MST_tree` is the one tree-producing function that returns a
 > **tuple**, not a bare `Tree`. `connected` is a boolean mask over the input
-> points saying which ones actually made it in — points farther than `thr`
-> from everything, or beyond `mplen` of path length, get dropped silently
-> otherwise.
+> points saying which ones actually made it in. Points farther than `thr`
+> from everything are never attached. A point beyond `mplen` of path length is
+> attached, as in MATLAB, but nothing can grow from it; pass `strict_mplen=True`
+> for a hard limit.
 
 `bf` is the **balancing factor**: `0` minimises total wiring length, `1`
 minimises path length to the root. It's the main knob controlling how a

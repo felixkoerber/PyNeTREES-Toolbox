@@ -1,40 +1,9 @@
-"""Reading MATLAB `.mat`/`.mtr` files of either vintage, as one call.
+"""Reading MATLAB workspaces: `.mat`, and the `.mtr` files TREES writes.
 
-MATLAB has two on-disk formats and the split matters here more than it
-usually does: **`save_tree.m` writes `'-v7.3'` unconditionally**, so every
-`.mtr` produced by a current TREES install is HDF5-based and invisible to
-`scipy.io.loadmat`, which reads only up to v7. That is not an edge case,
-it is the default path, and it is the crux of MATLAB<->Python
-interoperability for this toolbox.
-
-Which library
--------------
-Measured against the three real v7.3 files in `Active GC Model/morphos/`,
-not chosen from documentation:
-
-=================  =======================  ================================
-library            flat ``{t1..t8}`` cell   nested ``{{t1..t15}}`` cell
-=================  =======================  ================================
-`scipy.io`         raises                   raises
-`hdf5storage`      raises                   raises
-`pymatreader`      works                    **returns raw h5py References**
-`mat73`            works                    works
-=================  =======================  ================================
-
-`pymatreader` is the tempting choice -- it returns exactly the shape
-`scipy.io.loadmat(simplify_cells=True)` does -- but it fails to dereference
-the *nested* cell arrays that `load_tree.m` documents as the 2-level
-`cgui_tree` layout, handing back bare `h5py.Reference` objects instead. Two
-of the three bundled files use that layout. `mat73` handles both, so it is
-what this module uses (Design Decision #47).
-
-Worth knowing: **Octave cannot read these files either** (`load` warns
-"can't read 'tree' (unknown datatype)" and yields nothing), so there is no
-re-save-as-v5 escape hatch outside MATLAB itself.
-
-`mat73` is an optional dependency -- `pip install pynetrees[matlab]` -- and is
-imported lazily, so the core package stays dependency-light and only pays
-for HDF5 when a v7.3 file is actually opened.
+Two on-disk formats exist. v5/v7 files are read by `scipy.io`. v7.3 files are
+HDF5, and are what a current MATLAB writes: `save_tree.m` uses `'-v7.3'`
+unconditionally. They are read by :mod:`pynetrees.io._matlab_v73`, which keeps
+every cell array at its real depth so that nested populations stay nested.
 """
 
 from __future__ import annotations
@@ -68,9 +37,8 @@ def is_v73(path: str | Path) -> bool:
 def read_matlab(path: str | Path) -> dict:
     """Read a MATLAB `.mat`/`.mtr` file into a dict of plain Python objects.
 
-    Dispatches on the file's actual format -- read from its header, not
-    guessed from its extension -- using `scipy.io` for v5/v7 and `mat73` for
-    v7.3/HDF5.
+    Dispatches on the file's actual format, read from its header rather than
+    guessed from its extension.
 
     Parameters
     ----------
@@ -80,17 +48,13 @@ def read_matlab(path: str | Path) -> dict:
     -------
     dict
         Variable name -> value, with structs as dicts and cell arrays as
-        (possibly nested) lists -- the shape
-        `scipy.io.loadmat(simplify_cells=True)` produces. `mat73` adds an
-        extra level of list nesting in places; callers should flatten
-        recursively rather than index at a fixed depth (`mtr._flatten` does).
+        (possibly nested) lists.
 
     Raises
     ------
     ValueError
-        If the file is v7.3 and `mat73` is not installed -- naming the
-        install command, since scipy's own error says nothing about how to
-        proceed.
+        If the file is v7.3 and `h5py` is not installed, naming the install
+        command.
     """
     path = Path(path)
 
@@ -100,27 +64,42 @@ def read_matlab(path: str | Path) -> dict:
         # pass a str, not the Path: scipy's mat reader gives a clean
         # FileNotFoundError for a missing str path but an opaque OSError
         # ("needs file name or open file-like object") for a missing Path
-        return loadmat(str(path), simplify_cells=True)
+        raw = loadmat(str(path), simplify_cells=False)
+        return {key: _unpack_v5(value) for key, value in raw.items()
+                if not key.startswith("__")}
 
     try:
-        import mat73
+        import h5py  # noqa: F401
     except ImportError:
         raise ValueError(
             f"{path} is a MATLAB v7.3 (HDF5) file, which scipy cannot read. "
             f"Install the optional dependency: pip install 'pynetrees[matlab]'"
         ) from None
 
-    # mat73 logs a warning for any extension that isn't '.mat'; '.mtr' is a
-    # perfectly ordinary MATLAB workspace, so the warning is pure noise here
-    import logging
+    from ._matlab_v73 import read_v73
 
-    mat73_log = logging.getLogger()
-    previous = mat73_log.level
-    mat73_log.setLevel(logging.ERROR)
-    try:
-        return mat73.loadmat(str(path))
-    finally:
-        mat73_log.setLevel(previous)
+    return read_v73(path)
+
+
+def _unpack_v5(value):
+    """A v5 variable as plain values, keeping one-element cells as lists.
+
+    scipy's ``simplify_cells`` drops any cell holding a single element, which
+    would change the depth of a nested population.
+    """
+    if not isinstance(value, np.ndarray):
+        return value
+    if value.dtype.names:
+        records = [{name: _unpack_v5(record[name]) for name in value.dtype.names}
+                   for record in value.ravel(order="F")]
+        return records[0] if len(records) == 1 else records
+    if value.dtype == object:
+        return [_unpack_v5(item) for item in value.ravel(order="F")]
+    if value.dtype.kind in "US":
+        return str(value.item()) if value.size == 1 else ""
+    if value.size == 1:
+        return value.ravel()[0].item()
+    return np.squeeze(value)
 
 
 def to_plain(obj):

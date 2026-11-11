@@ -164,6 +164,8 @@ def gc_trees() -> list[Tree]:
     pynetrees.gc_model.gc_mod_path : the ``.mod`` sources to compile.
     """
     trees = _load_bundled("gc.mtr", "gc")
+    while len(trees) == 1 and isinstance(trees[0], list):   # the file wraps them in a cell
+        trees = trees[0]
     for index, tree in enumerate(trees, start=1):
         tree.name = f"GC{index}"
     return trees

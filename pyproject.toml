@@ -23,14 +23,10 @@ plot = ["pyvista>=0.44", "matplotlib>=3.7", "scikit-image>=0.22"]
 # installer (neuronsimulator.github.io) instead; this extra is a convenience
 # for Linux/macOS, where `pip install neuron` works directly.
 neuron = ["neuron>=8.0"]
-# MATLAB v7.3 (.mat/.mtr) files are HDF5, which scipy.io cannot read -- and
-# MATLAB's own save_tree writes v7.3 unconditionally, so this is needed for
-# any .mtr produced by a current TREES install. mat73 is used rather than
-# pymatreader/hdf5storage because it is the only one that dereferences
-# nested cell arrays of structs; see io/_matlab.py and Design Decision #47.
-matlab = ["mat73>=0.60"]
-# .nmf is HDF5 too. h5py already arrives with `matlab` (mat73 depends on
-# it), so this extra exists only so that "I want .nmf" does not read as
+# MATLAB v7.3 (.mat/.mtr) files are HDF5, which scipy.io cannot read or write,
+# and MATLAB's own save_tree writes v7.3 unconditionally.
+matlab = ["h5py>=3.8"]
+# .nmf is HDF5 too; this extra exists so that "I want .nmf" does not read as
 # "I want MATLAB support".
 nmf = ["h5py>=3.8"]
 # Image stacks. tifffile reads the multi-page TIFFs microscopes emit;
@@ -80,7 +76,7 @@ all-no-neuron = ["pynetrees[plot,matlab,nmf,stacks,notebook,dev,blender]"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pynetrees = ["data/*.swc", "data/*.npz", "data/*.mtr", "data/gc_mod/*.mod"]
+pynetrees = ["data/*.swc", "data/*.npz", "data/*.mtr", "data/*.json", "data/gc_mod/*.mod"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

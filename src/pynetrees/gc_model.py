@@ -68,6 +68,7 @@ __all__ = [
     "GCSpec",
     "GC_BIOPHYS",
     "GC_SPINE_DENSITY",
+    "GC_VARIANTS",
     "GC_init",
     "gc_mod_path",
     "gc_spec",
@@ -336,6 +337,23 @@ def gc_mod_path() -> Path:
 # ---------------------------------------------------------------------------
 
 
+#: The ``GC_biophys.m`` variants :func:`gc_spec` can build by name.
+GC_VARIANTS = ("published", "newborn", "ratadjust", "mainen_sejnowski", "k_variant", "ah99")
+
+
+def _variant_regions(name: str) -> tuple[dict, bool]:
+    """One variant's unscaled table, as dumped from ``GC_biophys.m``."""
+    from importlib import resources
+
+    bundled = resources.files("pynetrees") / "data" / "gc_variants.json"
+    regions = _deep_copy_regions(json.loads(bundled.read_text())[name]["regions"])
+    if name not in ("ah99", "mainen_sejnowski"):
+        # the ion settings GC_initModel.m applies afterwards ('Mongiat')
+        regions["all"].update(k_ion={"ek": -93.0}, na_ion={"ena": 87.76},
+                              ca_ion={"cao0": 2.0, "cai0": 4.8e-05})
+    return regions, name == "ah99"
+
+
 def gc_spec(
     source=None,
     *,
@@ -360,7 +378,12 @@ def gc_spec(
     source : str or Path or dict or GCSpec, optional
         Where the table comes from. Defaults to :data:`GC_BIOPHYS`, the
         published active model bundled with the package, so ``gc_spec()``
-        with no arguments is the Beining et al. (2017) granule cell. Also
+        with no arguments is the Beining et al. (2017) granule cell. A name
+        from :data:`GC_VARIANTS` gives the matching ``GC_biophys.m`` variant:
+        ``"newborn"`` (``-y``), ``"ratadjust"`` (``-ra``),
+        ``"mainen_sejnowski"`` (``-ms``), ``"k_variant"`` (``-k``) or
+        ``"ah99"`` (the older model), with spines folded in as
+        ``GC_initModel.m`` does. Also
         takes a JSON file of ``neuron.mech{1}`` as dumped from MATLAB, the
         same structure as a dict, or an existing spec to derive from.
     passive_only : bool, default False
@@ -393,7 +416,21 @@ def gc_spec(
     -------
     GCSpec
     """
-    if source is None:
+    if isinstance(source, str) and source in GC_VARIANTS:
+        regions, is_ah99 = _variant_regions(source)
+        spec = GCSpec(regions=regions, celsius=celsius, v_init=v_init,
+                      name=f"GC_{source}", spine_scaled=False)
+        # GC_initModel.m folds in spines at 0.9, except for AH99, whose
+        # biophysics already accounts for them
+        if is_ah99:
+            spec = replace(spec, spine_scaled=True)
+        else:
+            if spine_scale is None:
+                spine_scale = 0.9
+            if spine_density is None:
+                # regions only a variant has, such as nodes of Ranvier, carry no spines
+                spine_density = {**{region: 0.0 for region in regions}, **GC_SPINE_DENSITY}
+    elif source is None:
         spec = GCSpec(
             regions=_deep_copy_regions(GC_BIOPHYS), celsius=celsius,
             v_init=v_init, name="GC_Beining2017", spine_scaled=True,
@@ -583,20 +620,29 @@ def _set_parameter(h, sections, mech: str, param: str, value: float) -> bool:
     the MATLAB side -- so ask the object rather than keeping a table that
     would go stale against the ``.mod`` files.
     """
-    probe = getattr(next(iter(sections[0])), mech, None)
-    if probe is not None and hasattr(probe, param):
+    if mech.endswith("_ion"):
+        # An ion exists only on segments with a channel that uses it, so check
+        # each one. A reversal potential (ek/ena/eca) sits on the segment
+        # rather than on a mechanism object.
+        found = False
         for sec in sections:
             for seg in sec:
-                setattr(getattr(seg, mech), param, value)
-        return True
-
-    # an ion block's reversal potential (ek/ena/eca) sits on the segment
-    # itself rather than on a mechanism object
-    if mech.endswith("_ion") and hasattr(next(iter(sections[0])), param):
-        for sec in sections:
-            for seg in sec:
-                setattr(seg, param, value)
-        return True
+                ion = getattr(seg, mech, None)
+                if ion is not None and hasattr(ion, param):
+                    setattr(ion, param, value)
+                    found = True
+                elif hasattr(seg, param):
+                    setattr(seg, param, value)
+                    found = True
+        if found:
+            return True
+    else:
+        probe = getattr(next(iter(sections[0])), mech, None)
+        if probe is not None and hasattr(probe, param):
+            for sec in sections:
+                for seg in sec:
+                    setattr(getattr(seg, mech), param, value)
+            return True
 
     global_name = f"{param}_{mech}"
     if hasattr(h, global_name):

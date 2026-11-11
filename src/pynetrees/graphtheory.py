@@ -381,6 +381,7 @@ def path_to_root(tree: Tree, node: int) -> np.ndarray:
     return np.array(chain, dtype=int)
 
 
+@accepts_population
 @empty_safe("nodes", dtype=int)
 def BO_tree(tree: Tree) -> np.ndarray:
     """Branch order of each node: how many branch points lie between it and

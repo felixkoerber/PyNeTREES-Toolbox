@@ -176,7 +176,6 @@ differently spelled — each is documented in `PORT_STATUS.md`'s design log.
 
 | Function | Difference |
 |---|---|
-| `resample_tree` | Preserves branch/termination points exactly instead of snapping them onto the grid (#23) |
 | `rootangle_tree` | Centres on the root first; MATLAB measures from the coordinate origin, which only matches its own docstring if the tree happens to sit there (#24) |
 | `delete_tree` | Always splices to the nearest surviving ancestor and returns a forest when disconnected; MATLAB's default is documented-broken (#22) |
 | `strahler_tree` | Handles multifurcations; MATLAB assumes binary (#14) |
@@ -201,18 +200,12 @@ itemised inventory in `NOT_YET_PORTED.md`:
 
 - **`cgui_tree`** and the GUIDE GUI — a full MATLAB GUI application; a Python
   equivalent would be a rewrite against a different toolkit, not a port.
-- **`pov_tree`/`x3d_tree`** (POV-Ray/X3D scene export) — planned;
-  `pynetrees.blender` covers the same rendering need today.
 - **`fix_tree`/`fix_tree_UI`/`finetune_fix_tree`** — a MATLAB figure-callback
   GUI; MATLAB's own todo list flags these as incomplete.
-- **`GC_biophys`** (the Active GC Model's active-conductance fitting) —
-  substantial, scoped separately.
 - **`parseArgs`/`isBinary`** and other MATLAB plumbing — superseded by real
   Python arguments.
 - **T2N protocol library** (IV/FI/resonance/bAP) and its cluster/SSH execution
   mode — thin wrappers over `run_current_clamp`; add on demand.
-- **v7.3 (HDF5) writing** for `save_tree`/`save_mtr` — the current write path
-  is MATLAB v5, capped at ~2 GB per variable.
 
 ### `plot_tree`'s `color` argument
 

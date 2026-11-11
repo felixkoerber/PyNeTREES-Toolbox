@@ -1,6 +1,6 @@
 # API overview
 
-All 173 public names in `pynetrees`, grouped by what they're for, one line each.
+All 192 public names in `pynetrees`, grouped by what they're for, one line each.
 Everything below `import`s directly: `from pynetrees import len_tree`.
 
 Conventions: functions take the tree first, return per-node NumPy arrays of
@@ -22,7 +22,7 @@ package, so it cannot drift from what's actually importable.
 | `Tree.region_nodes(*names)` | Boolean mask of the nodes in the named region(s) |
 | `Tree.reindexed(order)` | New tree with nodes reordered/subset |
 | `Tree.copy(**fields)` | Copy with the named fields replaced (everything else carried over) |
-| `ver_tree(tree)` | Free-function form of `validate` |
+| `ver_tree(tree)` | Check a tree's internal consistency |
 | `NO_PARENT` | The `-1` sentinel |
 | `missing_dependencies()` | What this install cannot do, and which extra would fix it |
 
@@ -33,7 +33,7 @@ package, so it cannot drift from what's actually importable.
 | `load_tree` / `save_tree` | Dispatch by extension across every format below — the front door |
 | `load_swc` / `save_swc` | Standard SWC |
 | `load_mtr` / `save_mtr` | MATLAB `.mtr`/`.mat` archives (v5 write; v5 and v7.3/HDF5 read) |
-| `load_neurolucida` | NeuroLucida `.ASC` |
+| `load_neurolucida` | NeuroLucida `.ASC`: one tree per soma, joined to its contours; `full_output=True` returns `NeurolucidaResult(trees, markers, contours)` |
 | `load_neu` | NEURON transfer format `.neu` |
 | `load_nmf` / `save_nmf` | The toolbox's HDF5 extended-SWC `.nmf` |
 | `save_neuroml` | NeuroML `.xml` (export only) |
@@ -80,7 +80,7 @@ package, so it cannot drift from what's actually importable.
 |---|---|
 | `len_tree` | Segment length [µm] |
 | `L_tree` | Total cable length [µm] — `len_tree(tree).sum()`, under MATLAB's name |
-| `cyl_tree` | Segment start/end coordinates |
+| `cyl_tree` | Segment start/end coordinates; `adjacency=True` for MATLAB's sparse `-dA` form |
 | `surf_tree` / `vol_tree` / `cvol_tree` | Segment surface / volume / continuous volume |
 | `eucl_tree` | Straight-line distance to root (or any point) |
 | `dist_tree` | Distance to a set of nodes |
@@ -116,6 +116,7 @@ package, so it cannot drift from what's actually importable.
 | Name | Purpose |
 |---|---|
 | `MST_tree` | Grow a tree over a point cloud (`bf` balances wiring vs. path length); `full_output=True` returns `MSTResult(trees, connected, indx, history)` |
+| `MST_steps` | Rebuild the tree(s) at any step of a recorded `MST_tree` run |
 | `random_tree` | Toy tree: `MST_tree` over a scattered point cloud |
 | `growth_tree` | Grow into a *volume* rather than a fixed cloud, trading wiring cost against space-filling (`sp`) and stochasticity (`k`) — returns `Growth(tree, length, terminals, attached_to, target, targets, history)` |
 | `BCT_tree` / `isBCT_tree` | Build from / validate a BCT string |
@@ -171,8 +172,9 @@ A description of branching structure independent of embedding — see
 
 | Name | Purpose |
 |---|---|
-| `plot_tree` | 3D via PyVista — `mode="tube"/"line"`, `scalars=`, `plotter=`; also takes a **list of trees**, drawn into one scene |
+| `plot_tree` | 3D via PyVista — `mode="tube"/"line"/"blatt"/"quiver"`, `scalars=`, `plotter=`; also takes a **list of trees**, drawn into one scene |
 | `plot_mpl_tree` | Lighter matplotlib fallback |
+| `plot_sholl_tree` | Sholl spheres, crossings and their count drawn on the tree |
 | `vtext_tree` / `pointer_tree` | Label / mark nodes on a PyVista plot |
 | `chull_tree` | Convex hull (+ optional overlay) |
 | `dendrogram_tree` / `xdend_tree` | Abstract topology diagram / its layout |
@@ -254,6 +256,7 @@ Everything it needs ships with the package except a compiler, so
 | `GCModel` | The built model, its spec, and anything the compiled `.mod` library rejected |
 | `GC_BIOPHYS` | The bundled mechanism table — 11 regions, 570 parameters, `GC_biophys.m` as data |
 | `GC_SPINE_DENSITY` | Per-region spine factors from `GC_spinedensity.m` |
+| `GC_VARIANTS` | The `GC_biophys.m` variants `gc_spec` builds by name, such as `"newborn"` |
 | `gc_mod_path()` | The 44 bundled `.mod` sources, for `nrnivmodl` / `mknrndll` |
 
 ## Blender export (optional)

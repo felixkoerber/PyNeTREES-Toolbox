@@ -24,7 +24,7 @@ engine, `matplotlib` a lightweight 2D/quick-look fallback. Reasoning:
   built for large 3D scenes (no real GPU acceleration, `Line3DCollection`
   redraws the whole scene on every interaction). It stays useful for
   quick line-only previews, notebooks without a VTK-capable display, or
-  publication-style flat figures -- so `plot_tree_mpl` exists alongside
+  publication-style flat figures -- so `plot_mpl_tree` exists alongside
   `plot_tree`, but is documented as the lighter, less capable option, not
   a peer.
 
@@ -47,9 +47,11 @@ export shows up).
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
-from ._population import (accepts_population, is_nested_population,
+from ._population import (accepts_population, is_nested_population, leaves,
                           is_population)
 from ._empty import empty_safe
 from .core import Tree
@@ -109,6 +111,36 @@ def _tree_line_mesh(tree: Tree, nodes=None, offset=(0.0, 0.0, 0.0)):
     mesh.lines = lines.ravel()
     mesh.point_data["radius"] = tree.D / 2.0
     return mesh
+
+
+def _blatt_mesh(tree: Tree, nodes, offset, plane: int):
+    """Flat strips as wide as each segment, lying in one coordinate plane.
+
+    Returns the mesh and the node each strip belongs to, for colouring.
+    """
+    pv = _require_pyvista()
+    parents = idpar_tree(tree)
+    selected = np.arange(tree.n_nodes) if nodes is None else np.asarray(nodes)
+    selected = selected[parents[selected] != selected]
+
+    xyz = np.column_stack([tree.X, tree.Y, tree.Z]) + np.asarray(offset)
+    start, end = xyz[parents[selected]], xyz[selected]
+    length = np.linalg.norm(end - start, axis=1)
+    unit = np.divide(end - start, length[:, None], out=np.zeros_like(end),
+                     where=length[:, None] > 0)
+
+    first, second = {1: (0, 1), 2: (0, 2), 3: (1, 2)}[plane]
+    across = np.zeros_like(unit)
+    across[:, first], across[:, second] = -unit[:, second], unit[:, first]
+
+    end_half = (tree.D[selected] / 2)[:, None]
+    start_half = (tree.D[parents[selected]] / 2)[:, None] if tree.frustum else end_half
+    corners = np.stack([start + across * start_half, start - across * start_half,
+                        end - across * end_half, end + across * end_half], axis=1)
+    first_corner = 4 * np.arange(len(selected))
+    faces = np.column_stack([np.full(len(selected), 4), first_corner, first_corner + 1,
+                             first_corner + 2, first_corner + 3])
+    return pv.PolyData(corners.reshape(-1, 3), faces.ravel()), selected
 
 
 def _resolve_color(color, n_nodes: int):
@@ -207,8 +239,7 @@ def _plot_population(trees, *, color, offset, scalars, plotter, show,
     group is to see the cells together; ``spread_tree`` lays them out and
     this composes them.
     """
-    if is_nested_population(trees):
-        trees = [tree for group in trees for tree in group]
+    trees = leaves(trees)
     if len(trees) == 0:
         raise ValueError("plot_tree: empty list of trees")
 
@@ -248,6 +279,9 @@ def plot_tree(
     plotter=None,
     show: bool = False,
     screenshot: str | None = None,
+    lighting: bool = False,
+    blatt: int = 1,
+    dim: int = 3,
     **mesh_kwargs,
 ):
     """Render a tree in 3D with PyVista.
@@ -318,20 +352,27 @@ def plot_tree(
     coordinates regardless (``nodes`` only selects which line cells get
     built, which is the cost that matters on large trees).
 
-    MATLAB's ``'-b'`` (flat "blatt" patches) and ``'-2q'``/``'-3q'``
-    (quiver) render modes are not reproduced: ``'-b'`` exists to dodge the
-    cost of real cylinders in MATLAB's renderer, which ``mode='tube'``
-    simply does not have, and quiver plots of a 4000-segment tree are
-    unreadable. ``'-2l'``/``'-3l'`` map onto ``mode='line'``.
+    ``mode`` is ``'tube'`` (MATLAB's ``'-p'``), ``'line'`` (``'-3l'``),
+    ``'blatt'`` (``'-b'``: flat strips as wide as each segment, the fastest
+    form that still shows diameter) or ``'quiver'`` (``'-3q'``: one arrow per
+    segment, in a single colour). ``blatt`` picks the plane the strips lie in:
+    1 for XY, 2 for XZ and 3 for YZ, as in ``'-b1'`` to ``'-b3'``. ``dim=2``
+    flattens the tree onto ``Z = 0``, which gives ``'-2l'`` and ``'-2q'``.
+    ``lighting`` turns on shading; it is off by default.
     """
     if is_population(tree) or is_nested_population(tree):
         return _plot_population(
             tree, color=color, offset=offset, nodes=nodes, res=res, mode=mode,
             cmap=cmap, categories=categories, scalars=scalars,
-            plotter=plotter, show=show, screenshot=screenshot, **mesh_kwargs)
+            plotter=plotter, show=show, screenshot=screenshot,
+            lighting=lighting, blatt=blatt, dim=dim, **mesh_kwargs)
 
-    if mode not in ("tube", "line"):
-        raise ValueError(f"mode must be 'tube' or 'line', got {mode!r}")
+    if mode not in ("tube", "line", "blatt", "quiver"):
+        raise ValueError(
+            f"mode must be 'tube', 'line', 'blatt' or 'quiver', got {mode!r}")
+    if blatt not in (1, 2, 3):
+        raise ValueError(f"blatt must be 1, 2 or 3, got {blatt!r}")
+    dim = resolve_dim(dim)
 
     pv = _require_pyvista()
     if tree.n_nodes == 0:
@@ -343,7 +384,16 @@ def plot_tree(
     if scalars is not None:
         mapped, flat_color, rgb = np.asarray(scalars), None, None
 
-    mesh = _tree_line_mesh(tree, nodes=nodes, offset=offset)
+    if dim == 2:
+        tree = tree.copy(Z=np.zeros_like(tree.Z))
+
+    if mode == "blatt":
+        mesh, segments = _blatt_mesh(tree, nodes, offset, blatt)
+        data = mesh.cell_data
+    else:
+        mesh = _tree_line_mesh(tree, nodes=nodes, offset=offset)
+        segments = slice(None)
+        data = mesh.point_data
     if mapped is not None:
         mapped = np.asarray(mapped)
         if mapped.shape[0] != tree.n_nodes:
@@ -353,9 +403,9 @@ def plot_tree(
                 f"whole tree even when `nodes` renders a subset, see "
                 f"plot_tree's docstring"
             )
-        mesh.point_data["scalars"] = mapped
+        data["scalars"] = mapped[segments]
     elif rgb is not None:
-        mesh.point_data["rgb"] = rgb
+        data["rgb"] = rgb[segments]
 
     render_mesh = (
         mesh.tube(scalars="radius", absolute=True, radius=1.0, n_sides=res)
@@ -366,20 +416,101 @@ def plot_tree(
     if plotter is None:
         plotter = pv.Plotter(off_screen=not show)
 
-    if mapped is not None:
+    if mode == "quiver":
+        # arrows take a single colour, as MATLAB's quiver does
+        arrow = "black" if flat_color is None else flat_color
+        selected = np.arange(tree.n_nodes) if nodes is None else np.asarray(nodes)
+        parents = idpar_tree(tree)
+        selected = selected[parents[selected] != selected]
+        xyz = np.column_stack([tree.X, tree.Y, tree.Z]) + np.asarray(offset)
+        plotter.add_arrows(xyz[parents[selected]], xyz[selected] - xyz[parents[selected]],
+                           mag=1, color=arrow, lighting=lighting, **mesh_kwargs)
+    elif mapped is not None:
         n_colors = len(np.unique(mapped)) if categories else 256
         plotter.add_mesh(render_mesh, scalars="scalars", cmap=cmap,
-                         n_colors=max(n_colors, 2), **mesh_kwargs)
+                         n_colors=max(n_colors, 2), lighting=lighting, **mesh_kwargs)
     elif rgb is not None:
-        plotter.add_mesh(render_mesh, scalars="rgb", rgb=True, **mesh_kwargs)
+        plotter.add_mesh(render_mesh, scalars="rgb", rgb=True, lighting=lighting,
+                         **mesh_kwargs)
     else:
-        plotter.add_mesh(render_mesh, color=flat_color, **mesh_kwargs)
+        plotter.add_mesh(render_mesh, color=flat_color, lighting=lighting, **mesh_kwargs)
 
     if screenshot is not None:
         plotter.show(screenshot=screenshot) if show else plotter.screenshot(screenshot)
     elif show:
         plotter.show()
     return plotter
+
+@accepts_population
+@empty_safe("none")
+def plot_sholl_tree(tree: Tree, dd=50.0, dim: int = 2, ax=None, plotter=None, **options):
+    """Draw a Sholl analysis on the tree: spheres, crossings and their count.
+
+    Parameters
+    ----------
+    tree : Tree
+    dd : float or array_like, default 50.0
+        As for :func:`~pynetrees.sholl_tree`.
+    dim : {2, 3}, default 2
+        ``2`` draws circles over the XY projection with matplotlib (MATLAB's
+        ``'-s'``), with the intersection count in green against the right-hand
+        axis. ``3`` draws translucent spheres in PyVista (``'-s3'``).
+    ax, plotter : optional
+        Existing matplotlib Axes (``dim=2``) or PyVista plotter (``dim=3``).
+    **options
+        Passed to :func:`~pynetrees.sholl_tree`.
+
+    Returns
+    -------
+    matplotlib.axes.Axes or pyvista.Plotter
+    """
+    from .stats import sholl_tree
+
+    dim = resolve_dim(dim, default=2)
+    s, diameters, _, XP, YP, ZP, _ = sholl_tree(tree, dd, **options)
+    x0, y0, z0 = (float(v[tree.root]) for v in (tree.X, tree.Y, tree.Z))
+    scale = 0.9 * diameters[-1] / (2 * max(s.max(), 1))
+
+    if dim == 3:
+        pv = _require_pyvista()
+        plotter = plot_tree(tree, plotter=plotter)
+        if len(XP):
+            plotter.add_points(np.column_stack([XP, YP, ZP]), color="red", point_size=8,
+                               render_points_as_spheres=True)
+        for diameter in diameters[diameters > 0]:
+            plotter.add_mesh(pv.Sphere(radius=diameter / 2, center=(x0, y0, z0),
+                                       theta_resolution=40, phi_resolution=40),
+                             color="red", opacity=0.05, lighting=False)
+        curve = np.column_stack([x0 + diameters / 2, np.full(len(s), y0), z0 + s * scale])
+        plotter.add_lines(np.column_stack([curve[:-1], curve[1:]]).reshape(-1, 3),
+                          color="green", width=4)
+        return plotter
+
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        _, ax = plt.subplots()
+    parents = idpar_tree(tree)
+    for node in np.flatnonzero(parents != np.arange(tree.n_nodes)):
+        ax.plot([tree.X[parents[node]], tree.X[node]], [tree.Y[parents[node]], tree.Y[node]],
+                color="black", linewidth=0.8)
+    angle = np.linspace(0, 2 * np.pi, 65)
+    for diameter in diameters[diameters > 0]:
+        ax.plot(x0 + diameter * np.sin(angle) / 2, y0 + diameter * np.cos(angle) / 2,
+                color="red", linewidth=0.7)
+    ax.plot(XP, YP, ".", color="red", markersize=4, label="intersections")
+    ax.plot(x0 + diameters / 2, y0 + s * scale, color="green", linewidth=2,
+            label="intersection count")
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [um]")
+    ax.set_ylabel("y [um]")
+    ax.legend(frameon=False, loc="lower left")
+    counts = ax.secondary_yaxis("right", functions=(lambda y: (y - y0) / scale,
+                                                    lambda count: y0 + count * scale))
+    counts.set_ylabel("sholl intersections", color="green")
+    counts.tick_params(colors="green")
+    return ax
+
 
 def vtext_tree(
     plotter,
@@ -409,30 +540,47 @@ def pointer_tree(
     tree: Tree,
     nodes,
     style: str = "marker",
-    color="red",
+    color=None,
     size: float = 8.0,
     offset=(0.0, 0.0, 0.0),
+    length: float = 150.0,
+    rng=None,
 ):
     """Mark specific nodes on an existing ``plotter`` (electrodes,
-    points of interest, ...). ``style`` is ``"marker"`` (a point, fast) or
-    ``"sphere"`` (a small rendered sphere, clearer at a distance but
-    heavier for many points). Returns the same plotter.
+    points of interest, ...). Returns the same plotter.
 
-    MATLAB's tapering-electrode modes (`'-l'`/`'-v'`, built from a tiny
-    synthetic frustum tree) aren't ported -- niche relative to marking a
-    location, which `"sphere"`/`"marker"` already cover.
+    ``style`` is ``"marker"`` (a point, fast), ``"sphere"`` (a small rendered
+    sphere), ``"electrode"`` (a tapering tip, MATLAB's ``'-l'``) or
+    ``"wide_electrode"`` (a large translucent tip, ``'-v'``). Electrodes point
+    in a random direction with reach up to ``length`` along each axis; ``rng``
+    fixes it. The colour defaults to red, and to pale blue for
+    ``"wide_electrode"``.
     """
     pv = _require_pyvista()
     nodes = np.atleast_1d(np.asarray(nodes))
     points = np.column_stack([tree.X, tree.Y, tree.Z])[nodes] + np.asarray(offset)
 
+    if color is None:
+        color = (0.6, 0.7, 1.0) if style == "wide_electrode" else "red"
     if style == "sphere":
         for p in points:
             plotter.add_mesh(pv.Sphere(radius=size, center=p), color=color)
     elif style == "marker":
         plotter.add_points(points, color=color, point_size=size, render_points_as_spheres=True)
+    elif style in ("electrode", "wide_electrode"):
+        generator = np.random.default_rng(rng)
+        wide = style == "wide_electrode"
+        for p in points:
+            tip = p + generator.random(3) * length
+            probe = Tree(dA=[[0, 0], [1, 0]], X=[p[0], tip[0]], Y=[p[1], tip[1]],
+                         Z=[p[2], tip[2]], D=[10.0, 100.0] if wide else [1.0, 10.0],
+                         R=[0, 0], rnames=["electrode"], frustum=True)
+            plot_tree(probe, color=color, res=32 if wide else 8, plotter=plotter,
+                      opacity=0.2 if wide else 1.0)
     else:
-        raise ValueError(f"style must be 'marker' or 'sphere', got {style!r}")
+        raise ValueError(
+            f"style must be 'marker', 'sphere', 'electrode' or 'wide_electrode', "
+            f"got {style!r}")
     return plotter
 
 
@@ -610,13 +758,20 @@ def xdend_tree(tree: Tree):
 
 @accepts_population
 @empty_safe("none")
-def dendrogram_tree(tree: Tree, yvec=None, ax=None, color="black", linewidth: float = 1.0):
+def dendrogram_tree(tree: Tree, yvec=None, ax=None, color="black", linewidth: float = 1.0,
+                    offset=(0.0, 0.0), wscale: float = 1.0, horizontal: bool = True):
     """A 2D dendrogram: each node at ``(xdend_tree(tree), yvec)`` (default
     ``yvec``: path length from the root), connected to its parent by an
     L-shaped (horizontal-then-vertical) line, the standard dendrogram
     convention. Rendered with matplotlib -- an abstract topological
     diagram, not spatial anatomy, so PyVista's 3D machinery isn't the
     right tool here.
+
+    ``offset`` shifts the drawing by ``(dx, dy)``, ``wscale`` sets the spacing
+    of the terminals, and ``horizontal=False`` omits the horizontal connectors
+    (MATLAB's ``DD``, ``wscale`` and ``'-v'``). The layout assumes a binary
+    tree, so a tree with multifurcations draws with a warning: run
+    :func:`~pynetrees.repair_tree` first.
     """
     import matplotlib.pyplot as plt
 
@@ -625,7 +780,12 @@ def dendrogram_tree(tree: Tree, yvec=None, ax=None, color="black", linewidth: fl
 
     if yvec is None:
         yvec = Pvec_tree(tree, len_tree(tree))
-    xdend = xdend_tree(tree)
+    if np.asarray(tree.dA.sum(axis=0)).ravel().max(initial=0) > 2:
+        warnings.warn(
+            f"dendrogram_tree: tree {tree.name!r} has multifurcations, so the "
+            f"layout may overlap. Consider repair_tree first.", stacklevel=2)
+    xdend = xdend_tree(tree) * wscale + offset[0]
+    yvec = np.asarray(yvec) + offset[1]
     idpar = idpar_tree(tree)
 
     if ax is None:
@@ -636,8 +796,8 @@ def dendrogram_tree(tree: Tree, yvec=None, ax=None, color="black", linewidth: fl
     px, py = xdend[idpar[non_root]], yvec[idpar[non_root]]
     cx, cy = xdend[non_root], yvec[non_root]
     # L-shaped: horizontal at the parent's Y, then vertical to the child
-    xs = np.stack([px, cx, cx], axis=1)
-    ys = np.stack([py, py, cy], axis=1)
+    xs = np.stack([px, cx, cx], axis=1) if horizontal else np.stack([cx, cx], axis=1)
+    ys = np.stack([py, py, cy], axis=1) if horizontal else np.stack([py, cy], axis=1)
     for x, y in zip(xs, ys):
         ax.plot(x, y, color=color, linewidth=linewidth)
 

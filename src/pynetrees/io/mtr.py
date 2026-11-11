@@ -6,7 +6,7 @@ struct, a cell array of tree structs, or a 2-level-nested cell array of them
 (the `cgui_tree` layout).
 
 Both MATLAB on-disk formats are handled: v5/v7 via `scipy.io`, and v7.3
-(HDF5) via the optional `mat73` dependency. See :mod:`pynetrees.io._matlab`
+(HDF5) through the optional `h5py` dependency. See :mod:`pynetrees.io._matlab`
 for why that particular library, and why it matters (MATLAB's `save_tree`
 writes v7.3 unconditionally).
 
@@ -87,15 +87,26 @@ def load_mtr(path: str | Path, variable: str | None = None) -> Tree | list[Tree]
     data = read_matlab(path)
 
     raw = _select_variable(data, path, variable)
-    structs = [to_plain(s) for s in _flatten(raw)]
-    if not structs:
-        raise ValueError(f"{path}: tree variable is empty")
+    return _restore(raw, path.stem)
 
-    trees = [
-        _struct_to_tree(s, name=s.get("name") or f"{path.stem}_{i}")
-        for i, s in enumerate(structs)
-    ]
-    return trees[0] if len(trees) == 1 else trees
+
+def _restore(raw, label: str):
+    """Rebuild the file's own structure: a tree, or nested lists of them.
+
+    A cell array becomes a list at the same depth, an empty cell an empty list,
+    so that every tree keeps the index it had in the file.
+    """
+    raw = to_plain(raw)
+    if raw is None:
+        return []
+    if looks_like_tree(raw):
+        return _struct_to_tree(raw, name=raw.get("name") or label)
+    if isinstance(raw, (list, tuple, np.ndarray)):
+        items = raw.ravel() if isinstance(raw, np.ndarray) else raw
+        return [_restore(item, f"{label}_{i}") for i, item in enumerate(items)]
+    if isinstance(raw, dict):
+        raise ValueError(f"struct is missing required tree fields (has: {sorted(raw)})")
+    raise ValueError(f"unexpected tree variable contents: {type(raw)}")
 
 
 def _select_variable(data: dict, path: Path, variable: str | None):
@@ -134,7 +145,7 @@ def _flatten(raw):
 
     ``raw`` may be a single struct, a flat list of structs, or a 2-level
     nested list (MATLAB cell array of cell arrays, per `load_tree.m`'s
-    docstring). `mat73` adds a further wrapping level of its own, so this
+    docstring), so this
     recurses rather than indexing at a fixed depth.
 
     Structs arrive as either ``dict`` (usual) or ``mat_struct`` (scipy, at
@@ -181,6 +192,14 @@ def _struct_to_tree(struct: dict, name: str) -> Tree:
             f"tree struct is missing required fields (has: {sorted(struct)})"
         )
 
+    # an empty field can arrive as None
+    struct = dict(struct)
+    for field in ("X", "Y", "Z", "D", "R"):
+        if field in struct and struct[field] is None:
+            struct[field] = np.empty(0)
+    if struct["dA"] is None:
+        struct["dA"] = sparse.csr_matrix((0, 0))
+
     n = len(np.ravel(struct["X"]))
     R_1based = np.asarray(struct.get("R", np.ones(n))).astype(int).ravel()
     rnames = struct.get("rnames", ["1"])
@@ -213,7 +232,7 @@ def _struct_to_tree(struct: dict, name: str) -> Tree:
 # ---------------------------------------------------------------------------
 
 
-def save_mtr(trees: Tree | list[Tree], path: str | Path) -> Path:
+def save_mtr(trees: Tree | list[Tree], path: str | Path, *, version: str = "auto") -> Path:
     """Write one tree, or a list of them, to a MATLAB-readable ``.mtr``.
 
     Ports ``IO/save_tree.m``, which is a one-liner: ``save (name, 'tree',
@@ -224,16 +243,9 @@ def save_mtr(trees: Tree | list[Tree], path: str | Path) -> Path:
 
     Notes
     -----
-    **This writes v5, not v7.3.** MATLAB's `save_tree` forces ``-v7.3``
-    (HDF5); this uses ``scipy.io.savemat``, which writes the older v5
-    container. MATLAB's `load_tree` calls plain ``load``, which reads
-    either, so nothing on the MATLAB side can tell the difference. The
-    reason to prefer v5 is that writing a MATLAB *struct* into v7.3 by hand
-    means reproducing undocumented ``MATLAB_class`` attributes and object
-    references, i.e. reimplementing a format MATLAB never specified --
-    whereas ``savemat`` is a maintained, tested writer for the format
-    MATLAB has documented for decades. The only real v5 limit, 2 GB per
-    variable, is orders of magnitude beyond any morphology.
+    ``version="auto"`` writes MATLAB's v5 format, whose reader needs no extra
+    package, and switches to v7.3 (HDF5, needs ``h5py``) when the data is too
+    large for v5's limit of 2 GB per variable. MATLAB's `load_tree` reads both.
 
     Region names round-trip as ``rnames`` and the electrotonic constants as
     ``Ri``/``Gm``/``Cm``; the ``R`` indices are converted back to MATLAB's
@@ -245,16 +257,38 @@ def save_mtr(trees: Tree | list[Tree], path: str | Path) -> Path:
     if path.suffix != ".mtr":
         path = path.with_suffix(path.suffix + ".mtr")
 
-    if isinstance(trees, Tree):
-        payload = _tree_to_struct(trees)
-    else:
-        # a MATLAB cell array of structs is an object array to savemat
-        payload = np.empty((1, len(trees)), dtype=object)
-        for i, tree in enumerate(trees):
-            payload[0, i] = _tree_to_struct(tree)
+    if version not in ("auto", "5", "7.3"):
+        raise ValueError(f"version must be 'auto', '5' or '7.3', got {version!r}")
+    payload = _payload(trees)
+    if version == "7.3" or (version == "auto" and _estimated_bytes(trees) > _V5_LIMIT):
+        from ._matlab_v73 import write_v73
 
-    savemat(str(path), {"tree": payload}, do_compression=True)
+        write_v73(path, "tree", payload)
+    else:
+        savemat(str(path), {"tree": payload}, do_compression=True)
     return path
+
+
+#: v5 stores byte counts in 32 bits; stay clear of the 2 GB edge.
+_V5_LIMIT = 1_500_000_000
+
+
+def _payload(trees):
+    """A tree as a struct, and a population as (nested) cell arrays."""
+    if isinstance(trees, Tree):
+        return _tree_to_struct(trees)
+    # a MATLAB cell array of structs is an object array to savemat
+    cells = np.empty((1, len(trees)), dtype=object)
+    for i, member in enumerate(trees):
+        cells[0, i] = _payload(member)
+    return cells
+
+
+def _estimated_bytes(trees) -> int:
+    """Roughly how many bytes a tree or population takes uncompressed."""
+    if isinstance(trees, Tree):
+        return 6 * 8 * trees.n_nodes + 16 * int(trees.dA.nnz)
+    return sum(_estimated_bytes(member) for member in trees)
 
 
 def _tree_to_struct(tree: Tree) -> dict:

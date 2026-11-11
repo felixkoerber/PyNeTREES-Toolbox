@@ -297,6 +297,7 @@ def syn_tree(
     return sparse_linalg.spsolve(M2, rhs)
 
 
+@accepts_population(paired=("inodes1", "inodes2"))
 def loop_tree(
     tree: Tree,
     inodes1: int | np.ndarray,

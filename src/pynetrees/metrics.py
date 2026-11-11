@@ -23,9 +23,10 @@ import warnings
 from typing import NamedTuple
 
 import numpy as np
+from scipy import sparse
 
 from ._compat import resolve_dim
-from ._population import accepts_population, is_population, require_population
+from ._population import accepts_population, leaves, map_leaves, require_population
 from ._empty import empty_safe
 from .core import Tree
 from .graphtheory import (
@@ -63,7 +64,7 @@ def _descendants_of(blocks, node: int) -> np.ndarray:
 
 
 @accepts_population
-def cyl_tree(tree: Tree, dim: int | None = None):
+def cyl_tree(tree: Tree, dim: int | None = None, adjacency: bool = False):
     """Start/end coordinates of every segment (node-to-parent).
 
     Parameters
@@ -73,6 +74,10 @@ def cyl_tree(tree: Tree, dim: int | None = None):
         Default 3 (see :func:`pynetrees._compat.resolve_dim` for why the
         signature says ``None``).
         Work in 3D or project onto the XY plane (Design Decision #40).
+    adjacency : bool, default False
+        MATLAB's ``'-dA'``: return each coordinate as a sparse ``n_nodes`` by
+        ``n_nodes`` matrix laid out like ``tree.dA``, so entry ``(i, j)`` of
+        ``X1`` holds the parent coordinate of the segment from ``i`` to ``j``.
 
     Returns
     -------
@@ -82,13 +87,17 @@ def cyl_tree(tree: Tree, dim: int | None = None):
         segment has ``point1 == point2`` (it is its own parent under
         :func:`idpar_tree`'s default), so its length is 0.
 
-    Notes
-    -----
-    MATLAB's ``'-dA'`` output form -- the same geometry as sparse matrices --
-    is deliberately not ported: the MATLAB source's own comment on that
-    branch reads "SLOW!!", and nothing in the toolbox calls it.
     """
     dim = resolve_dim(dim)
+    if adjacency:
+        def at_parent(values):
+            return (tree.dA @ sparse.diags(values, format="csr")).tocsr()
+
+        def at_child(values):
+            return (sparse.diags(values, format="csr") @ tree.dA).tocsr()
+
+        axes = (tree.X, tree.Y) if dim == 2 else (tree.X, tree.Y, tree.Z)
+        return tuple(m for v in axes for m in (at_parent(v), at_child(v)))
     idpar = idpar_tree(tree)
     X1, X2 = tree.X[idpar], tree.X
     Y1, Y2 = tree.Y[idpar], tree.Y
@@ -934,15 +943,17 @@ def bin_tree(tree: Tree | list[Tree], v: np.ndarray | None = None, bins=10):
     numbers would not be comparable between cells -- which is the only
     reason to bin a group at all.
     """
-    if is_population(tree):
-        tree = require_population(tree, "bin_tree")
-        values = [eucl_tree(t) for t in tree] if v is None else list(v)
+    if isinstance(tree, (list, tuple)):
+        require_population(tree, "bin_tree")
+        cells = leaves(tree)
+        values = [eucl_tree(t) for t in cells] if v is None else leaves(v)
         bins_arr = np.asarray(bins, dtype=float)
         if bins_arr.ndim == 0:
             pooled = np.concatenate(values)
-            bins = np.linspace(pooled.min(), pooled.max() * 1.0001,
-                               int(bins_arr) + 1)
-        return ([bin_tree(t, each, bins)[0] for t, each in zip(tree, values)],
+            bins = (np.linspace(pooled.min(), pooled.max() * 1.0001, int(bins_arr) + 1)
+                    if pooled.size else np.empty(0))
+        remaining = iter(values)
+        return (map_leaves(lambda t: bin_tree(t, next(remaining), bins)[0], tree),
                 np.asarray(bins, dtype=float))
 
     v = eucl_tree(tree) if v is None else np.asarray(v, dtype=float)

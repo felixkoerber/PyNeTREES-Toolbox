@@ -7,6 +7,8 @@ not, so the checks there are structural: the declaration is well formed, the
 braces balance, and the numbers are the tree's own.
 """
 
+import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -231,6 +233,51 @@ def test_pov_refuses_a_filename_that_is_not_an_identifier(tmp_path, tree):
         pt.save_pov(tree, tmp_path / "my cell")
     with pytest.raises(ValueError, match="letter or underscore"):
         pt.save_pov(tree, tmp_path / "2cells")
+
+
+@pytest.mark.parametrize("word", ["v", "x", "square", "box", "pi", "union"])
+def test_pov_refuses_a_reserved_word(tmp_path, tree, word):
+    """POV-Ray cannot parse `#declare v = ...`, so the export must not write it."""
+    with pytest.raises(ValueError, match="reserved word"):
+        pt.save_pov(tree, tmp_path / word)
+
+
+def test_pov_reserved_words_are_case_sensitive(tmp_path, tree):
+    assert pt.save_pov(tree, tmp_path / "Box").exists()
+
+
+def test_pov_scene_is_placed_relative_to_the_cell(tmp_path, tree):
+    """A cell far from Z = 0 must not end up behind a camera at a fixed Z."""
+    moved = pt.tran_tree(tree, [0.0, 0.0, -5000.0])
+    path = pt.save_pov(moved, tmp_path / "Moved")
+    scene = (tmp_path / f"sh{path.name}").read_text(encoding="utf-8")
+    location = next(l for l in scene.splitlines() if "location" in l)
+    look_at = next(l for l in scene.splitlines() if "look_at" in l)
+    assert f"{moved.Z.min():.4f} - " in location
+    assert f"{(moved.Z.min() + moved.Z.max()) / 2:.4f}>" in look_at
+    assert "image_width / image_height" in location
+
+
+@pytest.mark.skipif(shutil.which("povray") is None, reason="POV-Ray is not installed")
+@pytest.mark.parametrize("style", ["plain", "fluorescence"])
+@pytest.mark.parametrize("size", [(320, 240), (240, 320), (300, 300)])
+@pytest.mark.parametrize("dz", [0.0, 500.0, -500.0])
+def test_pov_preset_scene_keeps_the_cell_in_frame(tmp_path, tree, style, size, dz):
+    """Rendered for real: any frame shape, anywhere in Z."""
+    from matplotlib.pyplot import imread
+
+    path = pt.save_pov(pt.tran_tree(tree, [0.0, 0.0, dz]), tmp_path / "Cell", style=style)
+    width, height = size
+    subprocess.run(
+        ["povray", f"+I{tmp_path / ('sh' + path.name)}", f"+O{tmp_path / 'out.png'}",
+         f"+W{width}", f"+H{height}", "+FN", "-D", f"+L{tmp_path}"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    pixels = imread(tmp_path / "out.png")[..., :3].mean(axis=2)
+    cell = pixels < 0.5 if style == "plain" else pixels > 0.2
+    assert cell.mean() > 0.005, "the cell should fill a real part of the image"
+    assert not cell[0].any() and not cell[-1].any()
+    assert not cell[:, 0].any() and not cell[:, -1].any()
 
 
 def test_pov_rejects_an_unknown_style(tmp_path, tree):

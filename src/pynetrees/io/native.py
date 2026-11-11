@@ -180,7 +180,7 @@ _SAVERS: dict[str, str] = {
 }
 
 
-def load_tree(path: str | Path, **kwargs) -> Tree | list[Tree]:
+def load_tree(path: str | Path | None = None, *, repair: bool | None = None, **kwargs):
     """Load a tree from any format this port reads, chosen by extension.
 
     ==========  ============================================================
@@ -192,29 +192,35 @@ def load_tree(path: str | Path, **kwargs) -> Tree | list[Tree]:
     ``.asc``    Neurolucida ASCII
     ==========  ============================================================
 
-    Extra keyword arguments are passed to the format's own loader, e.g.
-    ``load_tree("cell.neu", keep_sections=True)``. A path with no extension
-    at all is taken as ``.npz``, which is what `save_tree` writes when given
-    the same.
+    Parameters
+    ----------
+    path : str or Path, optional
+        Without one, a file dialog opens and several files can be selected.
+        Selecting more than one returns a list with one entry per file, and
+        cancelling returns ``None``.
+    repair : bool, optional
+        Pass the result through :func:`~pynetrees.repair_tree`. By default
+        this happens for ``.swc``, ``.neu``, ``.nmf`` and ``.asc``, and not
+        for ``.mtr`` or ``.npz``, matching MATLAB's defaults.
+    **kwargs
+        Passed to the format's own loader, e.g.
+        ``load_tree("cell.neu", keep_sections=True)``. A path with no extension
+        at all is taken as ``.npz``, which is what `save_tree` writes when
+        given the same.
 
-    Returns a single :class:`Tree`, or a list when the file holds several.
-
-    Notes
-    -----
-    Two things MATLAB's `load_tree` does that this does not.
-
-    It opens a **file dialog** when called with no argument. That is a
-    reasonable default for a GUI-first toolbox and a bad one for a library:
-    a function that blocks on a window cannot be called from a script, a
-    notebook running headless, or a test. Use a file dialog in your own
-    code if you want one; this function needs a path.
-
-    It also applies :func:`~pynetrees.repair_tree` automatically to
-    ``.swc``/``.neu``/``.nmf`` (its ``'-r'`` default), silently altering
-    what was on disk. Loading and repairing are kept separate here so that
-    "what does this file contain" has an answer -- call
-    ``repair_tree`` yourself when you want it.
+    Returns
+    -------
+    Tree, list or None
+        A single :class:`Tree`, or a list (nested as the file is) when the
+        file holds several.
     """
+    if path is None:
+        chosen = _choose_files_to_load()
+        if not chosen:
+            return None
+        loaded = [load_tree(one, repair=repair, **kwargs) for one in chosen]
+        return loaded[0] if len(loaded) == 1 else loaded
+
     path = Path(path)
     suffix = path.suffix.lower() or ".npz"  # no extension means the native one
     if suffix not in _LOADERS:
@@ -222,10 +228,20 @@ def load_tree(path: str | Path, **kwargs) -> Tree | list[Tree]:
             f"{path.name}: unrecognised extension {suffix!r}; "
             f"this port reads {', '.join(sorted(_LOADERS))}"
         )
-    return _loader(_LOADERS[suffix])(path, **kwargs)
+    if suffix in (".swc", ".asc"):
+        kwargs["repair"] = False    # applied once, below
+    loaded = _loader(_LOADERS[suffix])(path, **kwargs)
+    if repair is None:
+        # a tree kept in sections is deliberately not a repaired one
+        repair = suffix in (".swc", ".neu", ".nmf", ".asc") and not kwargs.get("keep_sections")
+    if repair:
+        from ..edit import repair_tree
+
+        loaded = repair_tree(loaded)
+    return loaded
 
 
-def save_tree(tree: Tree | list[Tree], path: str | Path, **kwargs) -> Path:
+def save_tree(tree: Tree | list[Tree], path: str | Path | None = None, **kwargs) -> Path | None:
     """Save a tree in the format named by ``path``'s extension.
 
     ==========  ============================================================
@@ -242,10 +258,15 @@ def save_tree(tree: Tree | list[Tree], path: str | Path, **kwargs) -> Path:
     These last three are **export only**: nothing here reads them back, so
     a tree saved as ``.hoc`` cannot be reloaded with :func:`load_tree`.
 
-    Only ``.mtr`` accepts a list of trees; the rest hold one tree per file.
-    Returns the path actually written -- the extension is added if missing,
-    so this is not always the path passed in.
+    Only ``.mtr`` accepts a list of trees, nested to any depth; the rest hold
+    one tree per file. Without a ``path``, a file dialog asks for one, and
+    cancelling it returns ``None``. Returns the path actually written -- the
+    extension is added if missing, so this is not always the path passed in.
     """
+    if path is None:
+        path = _choose_file_to_save()
+        if not path:
+            return None
     path = Path(path)
     suffix = path.suffix.lower() or ".npz"  # no extension means the native one
     if suffix not in _SAVERS:
@@ -259,6 +280,44 @@ def save_tree(tree: Tree | list[Tree], path: str | Path, **kwargs) -> Path:
             ".mtr, which stores a list"
         )
     return _saver(_SAVERS[suffix])(tree, path, **kwargs)
+
+
+_DIALOG_TYPES = [("TREES formats", "*.mtr *.mat *.swc *.neu *.nmf *.asc *.ASC *.npz"),
+                 ("All files", "*")]
+
+
+def _dialog():
+    """A hidden Tk root and its file dialogs, or a clear failure."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except ImportError as error:
+        raise ImportError(
+            "opening a file dialog needs tkinter, which this Python does not "
+            "have. Pass a path instead, or install Tk (on macOS with Homebrew: "
+            "brew install python-tk)."
+        ) from error
+    root = tkinter.Tk()
+    root.withdraw()
+    return root, filedialog
+
+
+def _choose_files_to_load() -> list[str]:
+    root, filedialog = _dialog()
+    try:
+        return list(filedialog.askopenfilenames(
+            title="load tree(s)", filetypes=_DIALOG_TYPES))
+    finally:
+        root.destroy()
+
+
+def _choose_file_to_save() -> str:
+    root, filedialog = _dialog()
+    try:
+        return filedialog.asksaveasfilename(
+            title="save tree", defaultextension=".mtr", filetypes=_DIALOG_TYPES)
+    finally:
+        root.destroy()
 
 
 def _loader(kind: str):

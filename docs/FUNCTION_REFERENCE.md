@@ -6,7 +6,7 @@
 conda run -n pynetrees python scripts/gen_function_reference.py
 ```
 
-**188 public names** as of this generation (166 functions, 18 result types).
+**192 public names** as of this generation (168 functions, 19 result types).
 
 For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md). This page is the detailed counterpart: full docstrings, in full.
 
@@ -15,7 +15,7 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [Data model](#data-model) (3)
 - [I/O — SWC](#io-swc) (2)
 - [I/O — MATLAB `.mtr`](#io-matlab-mtr) (2)
-- [I/O — NeuroLucida](#io-neurolucida) (1)
+- [I/O — NeuroLucida](#io-neurolucida) (2)
 - [I/O — `.neu`](#io-neu) (1)
 - [I/O — `.nmf`](#io-nmf) (2)
 - [I/O — NeuroML](#io-neuroml) (1)
@@ -25,13 +25,13 @@ For a curated, one-line-per-function skim, see [api-overview.md](api-overview.md
 - [Topology](#topology) (23)
 - [Geometry and metrics](#geometry-and-metrics) (24)
 - [Editing](#editing) (14)
-- [Construction](#construction) (15)
+- [Construction](#construction) (16)
 - [Generative pipeline](#generative-pipeline) (10)
 - [Density, hulls and space-filling](#density-hulls-and-space-filling) (13)
 - [Topological description (persistent homology)](#topological-description-persistent-homology) (3)
 - [Electrotonics](#electrotonics) (14)
 - [Statistics and comparison](#statistics-and-comparison) (10)
-- [Plotting](#plotting) (12)
+- [Plotting](#plotting) (13)
 - [Image stacks](#image-stacks) (8)
 - [NEURON simulation](#neuron-simulation) (4)
 - [X3D export](#x3d-export) (1)
@@ -97,8 +97,8 @@ meta : dict
     other shape are treated as whole-cell metadata and copied across
     unchanged. See :func:`_reindex_meta`.
 
-    ``.npz`` round-trips it (:func:`~pynetrees.io.save_npz`); the other
-    formats have nowhere to put it and drop it.
+    ``.npz`` and ``.mtr`` round-trip it; the other formats have nowhere
+    to put it and drop it.
 
 ### `ver_tree(tree: 'Tree', quiet: 'bool' = False) -> 'list[str]'`
 
@@ -119,9 +119,12 @@ list[str]
 
 ## I/O — SWC
 
-### `load_swc(path: 'str | Path') -> 'Tree | list[Tree]'`
+### `load_swc(path: 'str | Path', repair: 'bool' = True) -> 'Tree | list[Tree]'`
 
 Load an SWC file into one :class:`Tree`, or a list if it has >1 root.
+
+If ``repair`` (default), the result goes through
+:func:`~pynetrees.repair_tree`, as MATLAB's ``load_tree`` does by default.
 
 ### `save_swc(tree: 'Tree', path: 'str | Path') -> 'None'`
 
@@ -172,7 +175,7 @@ holding two, with nothing to say the rest had been dropped. What a
 variable is called is not evidence about which one you meant, so a file
 with one candidate loads it and a file with several refuses.
 
-### `save_mtr(trees: 'Tree | list[Tree]', path: 'str | Path') -> 'Path'`
+### `save_mtr(trees: 'Tree | list[Tree]', path: 'str | Path', *, version: 'str' = 'auto') -> 'Path'`
 
 Write one tree, or a list of them, to a MATLAB-readable ``.mtr``.
 
@@ -184,16 +187,9 @@ Returns the path written.
 
 Notes
 -----
-**This writes v5, not v7.3.** MATLAB's `save_tree` forces ``-v7.3``
-(HDF5); this uses ``scipy.io.savemat``, which writes the older v5
-container. MATLAB's `load_tree` calls plain ``load``, which reads
-either, so nothing on the MATLAB side can tell the difference. The
-reason to prefer v5 is that writing a MATLAB *struct* into v7.3 by hand
-means reproducing undocumented ``MATLAB_class`` attributes and object
-references, i.e. reimplementing a format MATLAB never specified --
-whereas ``savemat`` is a maintained, tested writer for the format
-MATLAB has documented for decades. The only real v5 limit, 2 GB per
-variable, is orders of magnitude beyond any morphology.
+``version="auto"`` writes MATLAB's v5 format, whose reader needs no extra
+package, and switches to v7.3 (HDF5, needs ``h5py``) when the data is too
+large for v5's limit of 2 GB per variable. MATLAB's `load_tree` reads both.
 
 Region names round-trip as ``rnames`` and the electrotonic constants as
 ``Ri``/``Gm``/``Cm``; the ``R`` indices are converted back to MATLAB's
@@ -203,13 +199,34 @@ Region names round-trip as ``rnames`` and the electrotonic constants as
 
 ## I/O — NeuroLucida
 
-### `load_neurolucida(path: 'str | Path', repair: 'bool' = True) -> 'Tree | list[Tree]'`
+### `NeurolucidaResult`
 
-Load a NeuroLucida ASCII (.asc) file into a Tree, or a list of Trees
-if it contains more than one (typically one per soma/dendrite/axon).
+Result of :func:`load_neurolucida` with ``full_output=True``.
 
-If ``repair`` (default), each resulting tree is passed through
-:func:`~pynetrees.repair_tree` before being returned.
+| Field | Description |
+|---|---|
+| `trees` | Alias for field number 0 |
+| `markers` | Alias for field number 1 |
+| `contours` | Alias for field number 2 |
+
+### `load_neurolucida(path: 'str | Path', repair: 'bool' = True, *, one_soma: 'bool' = False, full_output: 'bool' = False)`
+
+Load a NeuroLucida ASCII (.asc) file: one tree per soma.
+
+Each soma contour is turned into a chain of cylinders, and every
+reconstructed tree is attached to the soma nearest its first point. A file
+with no contour uses its first tree in place of a soma.
+
+Parameters
+----------
+path : str or Path
+repair : bool, default True
+    Pass each tree through :func:`~pynetrees.repair_tree`.
+one_soma : bool, default False
+    Keep only the soma with the largest volume. MATLAB's ``'-o'``.
+full_output : bool, default False
+    Return :class:`NeurolucidaResult`, which adds the markers and the raw
+    contours.
 
 ---
 
@@ -526,7 +543,7 @@ building the matrix.
 
 Load a Tree previously written by :func:`save_npz`.
 
-### `load_tree(path: 'str | Path', **kwargs) -> 'Tree | list[Tree]'`
+### `load_tree(path: 'str | Path | None' = None, *, repair: 'bool | None' = None, **kwargs)`
 
 Load a tree from any format this port reads, chosen by extension.
 
@@ -539,28 +556,27 @@ Load a tree from any format this port reads, chosen by extension.
 ``.asc``    Neurolucida ASCII
 ==========  ============================================================
 
-Extra keyword arguments are passed to the format's own loader, e.g.
-``load_tree("cell.neu", keep_sections=True)``. A path with no extension
-at all is taken as ``.npz``, which is what `save_tree` writes when given
-the same.
+Parameters
+----------
+path : str or Path, optional
+    Without one, a file dialog opens and several files can be selected.
+    Selecting more than one returns a list with one entry per file, and
+    cancelling returns ``None``.
+repair : bool, optional
+    Pass the result through :func:`~pynetrees.repair_tree`. By default
+    this happens for ``.swc``, ``.neu``, ``.nmf`` and ``.asc``, and not
+    for ``.mtr`` or ``.npz``, matching MATLAB's defaults.
+**kwargs
+    Passed to the format's own loader, e.g.
+    ``load_tree("cell.neu", keep_sections=True)``. A path with no extension
+    at all is taken as ``.npz``, which is what `save_tree` writes when
+    given the same.
 
-Returns a single :class:`Tree`, or a list when the file holds several.
-
-Notes
------
-Two things MATLAB's `load_tree` does that this does not.
-
-It opens a **file dialog** when called with no argument. That is a
-reasonable default for a GUI-first toolbox and a bad one for a library:
-a function that blocks on a window cannot be called from a script, a
-notebook running headless, or a test. Use a file dialog in your own
-code if you want one; this function needs a path.
-
-It also applies :func:`~pynetrees.repair_tree` automatically to
-``.swc``/``.neu``/``.nmf`` (its ``'-r'`` default), silently altering
-what was on disk. Loading and repairing are kept separate here so that
-"what does this file contain" has an answer -- call
-``repair_tree`` yourself when you want it.
+Returns
+-------
+Tree, list or None
+    A single :class:`Tree`, or a list (nested as the file is) when the
+    file holds several.
 
 ### `save_npz(tree: 'Tree', path: 'str | Path') -> 'Path'`
 
@@ -572,7 +588,7 @@ coordinates, regions, the ``frustum`` flag, whichever of
 arrays natively, the rest as JSON). This is the only format that does --
 see :func:`save_tree`'s table for what the others drop.
 
-### `save_tree(tree: 'Tree | list[Tree]', path: 'str | Path', **kwargs) -> 'Path'`
+### `save_tree(tree: 'Tree | list[Tree]', path: 'str | Path | None' = None, **kwargs) -> 'Path | None'`
 
 Save a tree in the format named by ``path``'s extension.
 
@@ -590,9 +606,10 @@ Save a tree in the format named by ``path``'s extension.
 These last three are **export only**: nothing here reads them back, so
 a tree saved as ``.hoc`` cannot be reloaded with :func:`load_tree`.
 
-Only ``.mtr`` accepts a list of trees; the rest hold one tree per file.
-Returns the path actually written -- the extension is added if missing,
-so this is not always the path passed in.
+Only ``.mtr`` accepts a list of trees, nested to any depth; the rest hold
+one tree per file. Without a ``path``, a file dialog asks for one, and
+cancelling it returns ``None``. Returns the path actually written -- the
+extension is added if missing, so this is not always the path passed in.
 
 ---
 
@@ -787,6 +804,10 @@ the root (root itself has branch order 0).
 
 An **empty tree** gives an empty result rather than an error -- see
 :mod:`pynetrees._empty`.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
 
 ### `B_tree(tree: 'Tree') -> 'np.ndarray'`
 
@@ -1402,7 +1423,7 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `cyl_tree(tree: 'Tree', dim: 'int | None' = None)`
+### `cyl_tree(tree: 'Tree', dim: 'int | None' = None, adjacency: 'bool' = False)`
 
 Start/end coordinates of every segment (node-to-parent).
 
@@ -1413,6 +1434,10 @@ dim : {2, 3}, optional
     Default 3 (see :func:`pynetrees._compat.resolve_dim` for why the
     signature says ``None``).
     Work in 3D or project onto the XY plane (Design Decision #40).
+adjacency : bool, default False
+    MATLAB's ``'-dA'``: return each coordinate as a sparse ``n_nodes`` by
+    ``n_nodes`` matrix laid out like ``tree.dA``, so entry ``(i, j)`` of
+    ``X1`` holds the parent coordinate of the segment from ``i`` to ``j``.
 
 Returns
 -------
@@ -1421,12 +1446,6 @@ tuple of np.ndarray
     ``(X1, X2, Y1, Y2, Z1, Z2)``, each of length ``n_nodes``. The root's
     segment has ``point1 == point2`` (it is its own parent under
     :func:`idpar_tree`'s default), so its length is 0.
-
-Notes
------
-MATLAB's ``'-dA'`` output form -- the same geometry as sparse matrices --
-is deliberately not ported: the MATLAB source's own comment on that
-branch reads "SLOW!!", and nothing in the toolbox calls it.
 
 Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
@@ -1822,11 +1841,16 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `cat_tree(tree1: 'Tree', tree2: 'Tree', inode1: 'int | None' = None, inode2: 'int' = 0, keep_regions: 'bool' = False) -> 'Tree'`
+### `cat_tree(tree1: 'Tree', tree2: 'Tree', inode1: 'int | None' = None, inode2: 'int' = 0, keep_regions: 'bool' = False, *, pairwise=True) -> 'Tree'`
 
 Concatenate ``tree2`` onto ``tree1``, connecting ``tree2``'s
 ``inode2`` (default: its root) to ``tree1``'s ``inode1`` (default:
 whichever node in ``tree1`` is closest to ``tree2``'s ``inode2``).
+
+Either tree may be a **population** (a list of trees, nested to any depth).
+By default every pairing is computed, with the result nested as the first
+population and then the second. ``pairwise=False`` matches them element by
+element instead, and raises if their nesting differs.
 
 ### `delete_tree(tree: 'Tree', inodes, keep_regions: 'bool' = False) -> 'Tree | list[Tree]'`
 
@@ -1969,6 +1993,11 @@ the previous one:
 
 The capability was previously undocumented and unvalidated; the
 forward-reference check above is what makes it safe to rely on.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``X``, ``Y``, ``Z``, ``D``, ``parent``, ``R``, ``swc`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `insertp_tree(tree: 'Tree', inode: 'int | None' = None, plens=None, *, full_output: 'bool' = False)`
 
@@ -2184,7 +2213,31 @@ Result of :func:`growth_tree`.
 | `targets` | Alias for field number 5 |
 | `history` | Alias for field number 6 |
 
-### `MST_tree(X, Y, Z=None, start=0, bf: 'float' = 0.4, thr: 'float' = 50.0, mplen: 'float' = 10000.0, avoid_multifurcations: 'bool' = False, *, dist=None, cut_ends: 'bool' = False, record: 'bool' = False, full_output: 'bool' = False)`
+### `MST_steps(result: 'MSTResult', steps=None) -> 'list'`
+
+Rebuild the growing tree(s) at chosen steps of an :func:`MST_tree` run.
+
+Parameters
+----------
+result : MSTResult
+    From ``MST_tree(..., record=True, full_output=True)``.
+steps : int or sequence of int, optional
+    How many connections have been made in each state. ``0`` is the start
+    of growth, and negative numbers count from the end. Defaults to every
+    step.
+
+Returns
+-------
+list
+    One state per step: a :class:`Tree`, or a list of them when there
+    were several start points. MATLAB's ``'-t'`` time-lapse output.
+
+Notes
+-----
+Nodes are added to a tree in the order they attach, so the tree at any
+step is simply the first nodes of the final tree.
+
+### `MST_tree(X, Y, Z=None, start=0, bf: 'float' = 0.4, thr: 'float' = 50.0, mplen: 'float' = 10000.0, avoid_multifurcations: 'bool' = False, *, dist=None, cut_ends: 'bool' = False, record: 'bool' = False, full_output: 'bool' = False, strict_mplen: 'bool' = False)`
 
 Grow synthetic tree(s) connecting a cloud of points.
 
@@ -2244,9 +2297,15 @@ cut_ends : bool, default False
     positive entry in ``dist`` -- the marked "cut ends". Requires
     ``dist``.
 record : bool, default False
-    MATLAB's ``'-t'``. Also return the growth history.
+    MATLAB's ``'-t'``. Also return the growth history, from which
+    :func:`MST_steps` rebuilds the tree at any step.
 full_output : bool, default False
     Return :class:`MSTResult` rather than just the tree(s).
+strict_mplen : bool, default False
+    How ``mplen`` is enforced. By default it behaves as in MATLAB: a point
+    whose path would exceed ``mplen`` is still attached, and nothing can
+    then grow from it, so paths can overshoot by one connection. With
+    ``True`` no path ever exceeds ``mplen``.
 
 Returns
 -------
@@ -2266,7 +2325,7 @@ Prim's-style growth where a node's best known cost only improves
 ``record`` returns the growth **log**, not a list of intermediate trees
 as MATLAB does: any intermediate state is a prefix of the log, so
 storing whole trees per step would be quadratic in memory for
-information already present.
+information already present. :func:`MST_steps` rebuilds them on request.
 
 **Verified against MATLAB R2026a** (2026-09-08) on four fixed clouds --
 150 points in 2-D, 200 in 3-D, 300 shared between three seeds, and one
@@ -3034,7 +3093,7 @@ Result of :func:`theta_mc_tree`.
 | `theta` | Alias for field number 0 |
 | `distances` | Alias for field number 1 |
 
-### `boundary_tree(tree: 'Tree', shrink: 'float | None' = None, dim: 'int | None' = None, nodes=None, *, c: 'float | None' = None) -> 'Boundary'`
+### `boundary_tree(tree: 'Tree', shrink: 'float | None' = None, dim: 'int | None' = None, nodes=None, *, c: 'float | None' = None, reduce: 'float | None' = None) -> 'Boundary'`
 
 Concave boundary (alpha shape) around a tree's points.
 
@@ -3055,6 +3114,11 @@ c : float, optional
     factor to ``1 - c``, so that a convex cell is wrapped loosely and a
     concave one tightly. Supplying ``c`` does exactly that. Mutually
     exclusive with ``shrink``.
+reduce : float in (0, 1), optional
+    3D only. Simplify the surface to about this fraction of its faces
+    (``0.5`` is what MATLAB's `boundary_tree` applies through
+    ``reducepatch``). ``volume``, ``points`` and ``simplices`` keep the
+    values of the full shape. Needs PyVista.
 
 Returns
 -------
@@ -3067,7 +3131,7 @@ nodes along existing cable does not change the point cloud's envelope,
 but it does subdivide the empty pockets between branches into simplices
 small enough to survive the threshold, so the boundary loosens.
 Resampling `hsn_tree` to 1 um leaves its convex hull unchanged while
-this grows from 30% to 49% of it. Comparisons across cells therefore
+this grows from 31% to 49% of it. Comparisons across cells therefore
 need a common sampling rate; :func:`pynetrees.theta_mc_tree`,
 :func:`pynetrees.r_mc_tree` and :func:`pynetrees.scaleV_tree` all inherit
 this.
@@ -3338,7 +3402,7 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `share_boundary_tree(tree1: 'Tree', tree2: 'Tree', thr: 'float' = 25.0, sr: 'float' = 5.0) -> 'float'`
+### `share_boundary_tree(tree1: 'Tree', tree2: 'Tree', thr: 'float' = 25.0, sr: 'float' = 5.0, *, pairwise=True) -> 'float'`
 
 Volume [um^3] shared by two trees' space-filling hulls.
 
@@ -3366,6 +3430,11 @@ Voxelised rather than computed as an exact mesh intersection, which is
 what MATLAB does too. Both hulls are sampled on **one common grid**
 spanning the union of their extents -- rasterising each on its own grid
 and comparing would compare different things.
+
+Either tree may be a **population** (a list of trees, nested to any depth).
+By default every pairing is computed, with the result nested as the first
+population and then the second. ``pairwise=False`` matches them element by
+element instead, and raises if their nesting differs.
 
 ### `span_tree(tree: 'Tree', radius: 'int | None' = None, *, method: 'str' = 'close', shrink: 'float' = 0.5) -> 'Span'`
 
@@ -3471,7 +3540,7 @@ at every node density: adding nodes along existing cable subdivides the
 empty pockets between branches into simplices small enough to be kept,
 so the boundary *loosens*. Resampling `hsn_tree` to 1 um leaves its
 convex hull unchanged (6.21e6 um^3) while the ``alpha = 0.5`` boundary
-goes from 30% to 49% of it, and theta with it from 24 um to 48 um.
+goes from 31% to 49% of it, and theta with it from 24 um to 48 um.
 Nothing about the morphology changed. Resample every cell in a
 comparison to a common rate first -- or use :func:`theta_tree`, whose
 one-micron grid does not have this sensitivity.
@@ -3711,6 +3780,11 @@ Notes
 Returns 0 if any non-root bar is born outside every other bar, which
 cannot happen for a barcode that came from a tree.
 
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``v`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
+
 ---
 
 ## Electrotonics
@@ -3912,6 +3986,11 @@ Adds a conductance ``gelsyn`` [uS] directly between each
 ``(inodes1[k], inodes2[k])`` pair of 0-based node indices, on top of
 :func:`M_tree`'s ordinary tree connectivity -- the only way to represent
 a non-tree (loopy) circuit in this data model.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape. ``inodes1``, ``inodes2`` may be given
+once for the whole group or as one value per tree -- see
+:mod:`pynetrees._population`.
 
 ### `sse_tree(tree: 'Tree', I: 'float | np.ndarray | None' = None) -> 'np.ndarray'`
 
@@ -4161,7 +4240,7 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `peters_tree(tree1: 'Tree', tree2: 'Tree', spinedis: 'float' = 3.0, synapsedis: 'float' = 3.0, resample: 'bool' = True) -> 'np.ndarray'`
+### `peters_tree(tree1: 'Tree', tree2: 'Tree', spinedis: 'float' = 3.0, synapsedis: 'float' = 3.0, resample: 'bool' = True, *, pairwise=True) -> 'np.ndarray'`
 
 Candidate synapses between two trees (Peters' rule).
 
@@ -4175,6 +4254,11 @@ contact. ``resample=True`` (default) resamples both trees to 1 um
 spacing first, matching MATLAB's default.
 
 Returns an ``(n_candidates, 3)`` array of ``(node1, node2, distance)``.
+
+Either tree may be a **population** (a list of trees, nested to any depth).
+By default every pairing is computed, with the result nested as the first
+population and then the second. ``pairwise=False`` matches them element by
+element instead, and raises if their nesting differs.
 
 ### `r_mc_tree(tree, alpha: 'float' = 0.5, n_mc: 'int' = 100, level: 'float' = 0.05, nodes='all', *, volume_correction: 'bool' = True, confidence: 'bool' = False, n_boot: 'int' = 1000, dim: 'int' = 3, rng=None) -> 'RMCResult'`
 
@@ -4396,7 +4480,7 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `dendrogram_tree(tree: 'Tree', yvec=None, ax=None, color='black', linewidth: 'float' = 1.0)`
+### `dendrogram_tree(tree: 'Tree', yvec=None, ax=None, color='black', linewidth: 'float' = 1.0, offset=(0.0, 0.0), wscale: 'float' = 1.0, horizontal: 'bool' = True)`
 
 A 2D dendrogram: each node at ``(xdend_tree(tree), yvec)`` (default
 ``yvec``: path length from the root), connected to its parent by an
@@ -4404,6 +4488,12 @@ L-shaped (horizontal-then-vertical) line, the standard dendrogram
 convention. Rendered with matplotlib -- an abstract topological
 diagram, not spatial anatomy, so PyVista's 3D machinery isn't the
 right tool here.
+
+``offset`` shifts the drawing by ``(dx, dy)``, ``wscale`` sets the spacing
+of the terminals, and ``horizontal=False`` omits the horizontal connectors
+(MATLAB's ``DD``, ``wscale`` and ``'-v'``). The layout assumes a binary
+tree, so a tree with multifurcations draws with a warning: run
+:func:`~pynetrees.repair_tree` first.
 
 An **empty tree** gives an empty result rather than an error -- see
 :mod:`pynetrees._empty`.
@@ -4427,7 +4517,36 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `plot_tree(tree: 'Tree', color=None, offset=(0.0, 0.0, 0.0), nodes=None, res: 'int' = 8, *, mode: 'str' = 'tube', cmap: 'str' = 'viridis', categories: 'bool' = False, scalars=None, plotter=None, show: 'bool' = False, screenshot: 'str | None' = None, **mesh_kwargs)`
+### `plot_sholl_tree(tree: 'Tree', dd=50.0, dim: 'int' = 2, ax=None, plotter=None, **options)`
+
+Draw a Sholl analysis on the tree: spheres, crossings and their count.
+
+Parameters
+----------
+tree : Tree
+dd : float or array_like, default 50.0
+    As for :func:`~pynetrees.sholl_tree`.
+dim : {2, 3}, default 2
+    ``2`` draws circles over the XY projection with matplotlib (MATLAB's
+    ``'-s'``), with the intersection count in green against the right-hand
+    axis. ``3`` draws translucent spheres in PyVista (``'-s3'``).
+ax, plotter : optional
+    Existing matplotlib Axes (``dim=2``) or PyVista plotter (``dim=3``).
+**options
+    Passed to :func:`~pynetrees.sholl_tree`.
+
+Returns
+-------
+matplotlib.axes.Axes or pyvista.Plotter
+
+An **empty tree** gives an empty result rather than an error -- see
+:mod:`pynetrees._empty`.
+
+Accepts a **list of trees** (or a list of lists of trees) as well as a
+single one, returning results in the same shape -- see
+:mod:`pynetrees._population`.
+
+### `plot_tree(tree: 'Tree', color=None, offset=(0.0, 0.0, 0.0), nodes=None, res: 'int' = 8, *, mode: 'str' = 'tube', cmap: 'str' = 'viridis', categories: 'bool' = False, scalars=None, plotter=None, show: 'bool' = False, screenshot: 'str | None' = None, lighting: 'bool' = False, blatt: 'int' = 1, dim: 'int' = 3, **mesh_kwargs)`
 
 Render a tree in 3D with PyVista.
 
@@ -4497,11 +4616,13 @@ positional slot.
 coordinates regardless (``nodes`` only selects which line cells get
 built, which is the cost that matters on large trees).
 
-MATLAB's ``'-b'`` (flat "blatt" patches) and ``'-2q'``/``'-3q'``
-(quiver) render modes are not reproduced: ``'-b'`` exists to dodge the
-cost of real cylinders in MATLAB's renderer, which ``mode='tube'``
-simply does not have, and quiver plots of a 4000-segment tree are
-unreadable. ``'-2l'``/``'-3l'`` map onto ``mode='line'``.
+``mode`` is ``'tube'`` (MATLAB's ``'-p'``), ``'line'`` (``'-3l'``),
+``'blatt'`` (``'-b'``: flat strips as wide as each segment, the fastest
+form that still shows diameter) or ``'quiver'`` (``'-3q'``: one arrow per
+segment, in a single colour). ``blatt`` picks the plane the strips lie in:
+1 for XY, 2 for XZ and 3 for YZ, as in ``'-b1'`` to ``'-b3'``. ``dim=2``
+flattens the tree onto ``Z = 0``, which gives ``'-2l'`` and ``'-2q'``.
+``lighting`` turns on shading; it is off by default.
 
 ### `plotsect_tree(tree: 'Tree', sect, color='black', offset=(0.0, 0.0, 0.0), ipar=None, ax=None, linewidth: 'float' = 2.0, *, full_output: 'bool' = False)`
 
@@ -4534,16 +4655,17 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `pointer_tree(plotter, tree: 'Tree', nodes, style: 'str' = 'marker', color='red', size: 'float' = 8.0, offset=(0.0, 0.0, 0.0))`
+### `pointer_tree(plotter, tree: 'Tree', nodes, style: 'str' = 'marker', color=None, size: 'float' = 8.0, offset=(0.0, 0.0, 0.0), length: 'float' = 150.0, rng=None)`
 
 Mark specific nodes on an existing ``plotter`` (electrodes,
-points of interest, ...). ``style`` is ``"marker"`` (a point, fast) or
-``"sphere"`` (a small rendered sphere, clearer at a distance but
-heavier for many points). Returns the same plotter.
+points of interest, ...). Returns the same plotter.
 
-MATLAB's tapering-electrode modes (`'-l'`/`'-v'`, built from a tiny
-synthetic frustum tree) aren't ported -- niche relative to marking a
-location, which `"sphere"`/`"marker"` already cover.
+``style`` is ``"marker"`` (a point, fast), ``"sphere"`` (a small rendered
+sphere), ``"electrode"`` (a tapering tip, MATLAB's ``'-l'``) or
+``"wide_electrode"`` (a large translucent tip, ``'-v'``). Electrodes point
+in a random direction with reach up to ``length`` along each axis; ``rng``
+fixes it. The colour defaults to red, and to pale blue for
+``"wide_electrode"``.
 
 ### `spread_tree(trees: 'list[Tree]', dx: 'float' = 50.0, dy: 'float' = 50.0) -> 'SpreadResult'`
 
@@ -4874,7 +4996,7 @@ Accepts a **list of trees** (or a list of lists of trees) as well as a
 single one, returning results in the same shape -- see
 :mod:`pynetrees._population`.
 
-### `insert_mechanism(model: 'NeuronModel', mechanism: 'str', region: 'str | list[str] | None' = None, *, nodes=None, origin: 'int | None' = None, **params)`
+### `insert_mechanism(model: 'NeuronModel', mechanism: 'str', region: 'str | list[str] | None' = None, *, nodes=None, origin: 'int | None' = None, only_nodes: 'bool' = False, **params)`
 
 Insert a NEURON mechanism (e.g. ``"hh"``) on part of the model.
 
@@ -4897,6 +5019,14 @@ nodes : array_like of int, optional
 origin : int, optional
     Node the distances passed to a callable parameter are measured
     from. Defaults to the tree's root.
+only_nodes : bool, default False
+    Requires ``nodes``. NEURON inserts a mechanism per section, so by
+    default every segment of the sections holding ``nodes`` is affected.
+    With ``True`` the parameters are set only on the segments containing
+    those nodes, and elsewhere in a section that did not already have the
+    mechanism the named parameters are set to 0. Name the mechanism's
+    conductance among ``params``, or it keeps its default in those
+    segments.
 **params
     Parameter values, each either
 
@@ -5007,7 +5137,9 @@ tree : Tree
 path : str or Path
     ``.pov`` is appended if missing. The stem becomes the POV-Ray
     identifier the geometry is declared under, so it has to be a legal
-    one -- letters, digits and underscores, not starting with a digit.
+    one -- letters, digits and underscores, not starting with a digit,
+    and not a POV-Ray reserved word such as ``v`` or ``box``. A name
+    containing a capital letter is always safe.
 v : array_like, optional
     One value per node, colour-coded through ``viridis``. Without it
     every segment gets ``color``.
@@ -5027,7 +5159,9 @@ style : {'plain', 'fluorescence', 'coral'} or None, default 'plain'
     Also write the ``sh<name>.pov`` scene file in this style; ``None``
     writes only the geometry. See :data:`POV_STYLES`.
 width, height : int
-    Only used to set the camera's aspect ratio in the scene file.
+    The image size suggested in the scene file's render command. The
+    camera adapts to whatever size is actually rendered, keeping the
+    whole cell in frame.
 
 Returns
 -------
@@ -5226,7 +5360,12 @@ Parameters
 source : str or Path or dict or GCSpec, optional
     Where the table comes from. Defaults to :data:`GC_BIOPHYS`, the
     published active model bundled with the package, so ``gc_spec()``
-    with no arguments is the Beining et al. (2017) granule cell. Also
+    with no arguments is the Beining et al. (2017) granule cell. A name
+    from :data:`GC_VARIANTS` gives the matching ``GC_biophys.m`` variant:
+    ``"newborn"`` (``-y``), ``"ratadjust"`` (``-ra``),
+    ``"mainen_sejnowski"`` (``-ms``), ``"k_variant"`` (``-k``) or
+    ``"ah99"`` (the older model), with spines folded in as
+    ``GC_initModel.m`` does. Also
     takes a JSON file of ``neuron.mech{1}`` as dumped from MATLAB, the
     same structure as a dict, or an existing spec to derive from.
 passive_only : bool, default False
@@ -5273,6 +5412,10 @@ Value: `{'all': {'Cabuffer': {'brat': 50.0, 'tau': 240.0, 'depth': 0.05}, 'k_ion
 
 Value: `{'soma': 0.0, 'axon': 0.0, 'axonh': 0.0, 'GCL': 0.0, 'SGCL': 0.0, 'adendIML': 0.5, 'adendMML': 1.0, 'adendOML': 1.0}`
 
+### `GC_VARIANTS`
+
+Value: `('published', 'newborn', 'ratadjust', 'mainen_sejnowski', 'k_variant', 'ah99')`
+
 ### `POV_STYLES`
 
 Value: `{'plain': ('rgbt <1, 1, 1, 0>', 1.0, 'black on white, no shading -- the one for a figure panel'), 'fluorescence': ('rgbt <0, 0, 0, 0.75>', 0.0, 'glowing cell on black, as a confocal stack looks'), 'coral': ('rgbt <0.7, 0.7, 0.7, 0.75>', 0.0, 'lit from above over a grey ground plane')}`
@@ -5287,7 +5430,7 @@ Not imported by `import pynetrees` -- opt in with `from pynetrees import blender
 
 Value: `{'soma': (0.85, 0.75, 0.35), 'axon': (0.35, 0.55, 0.85), 'dendrite': (0.85, 0.35, 0.35), 'basal': (0.85, 0.45, 0.3), 'apical': (0.9, 0.3, 0.45), 'spines': (0.55, 0.85, 0.45), 'primary': (0.8, 0.5, 0.2)}`
 
-### `build_tree(tree: 'Tree', name: 'str | None' = None, *, region_colors: 'dict | None' = None, resolution: 'int' = 8, taper: 'bool' = True, min_diameter: 'float' = 0.1, reset: 'bool' = True, offset=(0.0, 0.0, 0.0)) -> 'list'`
+### `build_tree(tree: 'Tree', name: 'str | None' = None, *, region_colors: 'dict | None' = None, resolution: 'int' = 8, taper: 'bool' = True, min_diameter: 'float' = 0.1, reset: 'bool' = True, offset=(0.0, 0.0, 0.0), stepped=('spine',)) -> 'list'`
 
 Build a tree as Blender curve objects, one per region.
 
@@ -5315,11 +5458,18 @@ reset : bool, default True
 offset : (dx, dy, dz), default (0, 0, 0)
     Shift the tree, for laying several out in one scene -- pair with
     :func:`~pynetrees.spread_tree`.
+stepped : sequence of str, default ('spine',)
+    Regions drawn as separate cylinders, each with its end node's
+    diameter, instead of tapering smoothly from node to node. Names are
+    matched case-insensitively and by substring. The default keeps a
+    spine's thin neck and wide head distinct, which a linear taper would
+    turn into a cone. Pass ``()`` to taper every region. Has no effect
+    with ``taper=False``.
 
 Returns
 -------
 list
-    The created ``bpy`` objects, one per region.
+    The created ``bpy`` objects, one per region. Tube ends are closed.
 
 ### `render_tree(tree: 'Tree | list[Tree]', path: 'str | Path', *, size=(1200, 900), view: 'str' = 'xy', samples: 'int' = 32, background=(0.05, 0.05, 0.06), margin: 'float' = 1.1, **kwargs) -> 'Path'`
 

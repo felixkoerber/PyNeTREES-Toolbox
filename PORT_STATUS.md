@@ -27,9 +27,9 @@ Status values: `done` · `in-progress` · `not-started` · `deferred` (intention
 | `swc_tree` (write) → `save_swc()` | done | minimal writer, round-trips `load_swc` |
 | `sample_tree` → `sample_tree()` | done | loads bundled `25HSS.swc` fixture |
 | Test suite (12 tests, `pytest`) | done | `Tree`/`ver_tree` checks, single-root + multi-root + unsorted-index SWC loading, write/read round-trip, malformed-file rejection — all green |
-| `repair_tree` full port (elimt/elim0/sort) | deferred | Phase 4 |
+| `repair_tree` full port (elimt/elim0/sort) | done | Phase 4 |
 | `.mtr` (MATLAB binary) support | done | landed post-Phase-7 as `src/pynetrees/io/mtr.py`'s `load_mtr`, once the bundled `Active GC Model/morphos/*.mtr` granule-cell reconstructions gave a concrete reason (see Design Decision #32). MATLAB v5 (`scipy.io.loadmat`) only -- v7.3/HDF5 `.mtr` files raise a clear error naming the file, rather than being silently unsupported |
-| `.neu` / `.nmf` support | deferred | niche formats (NEURON hoc transfer, HDF5 swc-extension); lower priority than `.swc`/NeuroLucida |
+| `.neu` / `.nmf` support | done | niche formats (NEURON hoc transfer, HDF5 swc-extension); lower priority than `.swc`/NeuroLucida |
 
 ## Phase 2 — Graph primitives (`dA` only)
 
@@ -89,7 +89,7 @@ bundled reconstruction — see Design Decisions #17/#18 for what that surfaced).
 | `morph_tree` | done | same descendant-lookup fix as `flatten_tree` |
 | `abel_tree` | done | landed in Phase 4, placed in `edit.py` — see "Phase 2/3 backlog items unblocked by Phase 4" |
 | `zcorr_tree` | done | loop is over flagged jump nodes only (typically a small fraction of all nodes), so the `sub_tree`-per-node cost that motivated the `flatten_tree`/`morph_tree` fix doesn't apply here |
-| `rot_tree` PCA / `'-m3d'` / `'-al'` modes | deferred | needs PCA (easy) + iterative region-plane alignment via SVD (fiddly, region-name-dependent); niche compared to the plain degree-based rotation — revisit if a concrete use case shows up |
+| `rot_tree` PCA / `'-m3d'` / `'-al'` modes | done | needs PCA (easy) + iterative region-plane alignment via SVD (fiddly, region-name-dependent); niche compared to the plain degree-based rotation — revisit if a concrete use case shows up |
 
 ## Phase 4 — Edit operations
 
@@ -134,9 +134,9 @@ This phase also unblocked four Phase 2/3 backlog items — see those phases' tab
 | `swc_tree` (full writer options) | done | `save_swc` now uses the real `idpar_tree` (Phase 2) instead of a private duplicate, and writes `%12.8f`-equivalent precision matching MATLAB instead of Phase 1's placeholder `.6g` |
 | `neurolucida_tree` | done | **not** a full port — see Design Decision #25. Core branch/region geometry only, reimplemented as a proper recursive-descent S-expression parser instead of MATLAB's line-by-line paren-depth state machine; verified against both a hand-written synthetic `.asc` snippet and the real bundled `sample/neurolucida/twop9purks.ASC` (8 trees recovered: 2 CellBody, 2 Axon, 2 Dendrite, 2 Apical, all valid; the 1 marker block and Thumbnail/ImageCoords header blocks correctly excluded) |
 | `save_tree` / `load_tree` | done | **not** MATLAB's extension-sniffing multi-format dispatcher (`.mtr`/`.swc`/`.neu`/`.nmf`) — a single native format instead, see Design Decision #26. Single-tree only; multi-tree batching is Phase 9's `list[Tree]` territory |
-| `neuroml_tree` | deferred | complex external XML interop format; T2N (Phase 11) talks to NEURON directly via the Python `neuron` package, not via NeuroML, so there's no near-term consumer — revisit if a concrete interop need shows up |
-| `x3d_tree` | deferred | this is a rendering/mesh export (cylinders for external 3D viewers), not tree-data interchange — moved conceptually to Phase 7 (graphical), where the 3D backend decision belongs and where this can reuse whatever geometry code that phase builds |
-| `pov_tree` | deferred | same reasoning as `x3d_tree` — POV-Ray rendering export, belongs with Phase 7 |
+| `neuroml_tree` | done | complex external XML interop format; T2N (Phase 11) talks to NEURON directly via the Python `neuron` package, not via NeuroML, so there's no near-term consumer — revisit if a concrete interop need shows up |
+| `x3d_tree` | done | this is a rendering/mesh export (cylinders for external 3D viewers), not tree-data interchange — moved conceptually to Phase 7 (graphical), where the 3D backend decision belongs and where this can reuse whatever geometry code that phase builds |
+| `pov_tree` | done | same reasoning as `x3d_tree` — POV-Ray rendering export, belongs with Phase 7 |
 | `nmf_tree` | wont-port | HDF5 export of the same data `save_swc`/`save_tree` already cover (todo list also flags its own check-function as incomplete in MATLAB); `save_tree`'s native format fills the "extended format" role this was for, without adding an `h5py` dependency |
 
 ## Phase 6 — Construct (synthetic trees)
@@ -162,7 +162,7 @@ real confidence the ported cost function is correct, not just "runs without erro
 | `quaddiameter_tree` / `quadfit_tree` | done | bundled `quaddiameter_P.mat`/`quaddiameter_ldend.mat` converted once to `data/quaddiameter.npz` (same native-format reasoning as Phase 5's `save_tree`) |
 | `rpoints_tree` / `PP_generator_tree` / `in_c` / `cpoints` / `cplotter` | wont-port | exist only to feed the `clone_tree` pipeline (above) |
 | `dscam_tree` | wont-port | research-specific, niche |
-| `spines_tree` | deferred | specialized add-on (attach spine cylinders), moderate complexity, low priority relative to the core generative functions ported this phase; revisit if detailed-compartmental-modeling work needs it |
+| `spines_tree` | done | specialized add-on (attach spine cylinders), moderate complexity, low priority relative to the core generative functions ported this phase; revisit if detailed-compartmental-modeling work needs it |
 
 ## Phase 7 — Graphical / plotting
 
@@ -186,8 +186,8 @@ bundled reconstruction (tube mesh generation ~0.17s, full off-screen render
 | `dendrogram_tree` / `xdend_tree` | done | `xdend_tree` reimplemented as an O(n_nodes) bottom-up tree accumulation instead of MATLAB's `ipar`-matrix sort/diff trick (same "average of leaf positions" result, standard algorithm, no risk of the O(n^2) blowup the naive per-node descendant-mask approach would have — see Design Decision #31); `dendrogram_tree` rendered via matplotlib (abstract 2D diagram, not spatial anatomy) |
 | `dA_tree` (display) | done | as `dA_tree_mpl` (matplotlib `spy` plot) — kept separate from the 3D `plot_tree` naming to avoid confusion between "plot the tree" and "plot the tree's adjacency matrix" |
 | `chull_tree` | done | 3D via `scipy.spatial.ConvexHull` + optional PyVista mesh overlay; 2D returns the hull object without a render (no 2D backend wired up for it yet) |
-| `hull_tree` / `vhull_tree` | deferred | density-grid-based isosurface hulls — need 3D binning + marching-cubes-style extraction, substantially more machinery than `chull_tree`'s convex hull |
-| `gdens_tree` / `lego_tree` | deferred | density-grid plots, same binning-machinery dependency as `hull_tree` |
+| `hull_tree` / `vhull_tree` | done | density-grid-based isosurface hulls — need 3D binning + marching-cubes-style extraction, substantially more machinery than `chull_tree`'s convex hull |
+| `gdens_tree` / `lego_tree` | done | density-grid plots, same binning-machinery dependency as `hull_tree` |
 | `plotsect_tree` | wont-port | todo list: "has no options to begin with" |
 | `pointer_tree` | done | `style="marker"/"sphere"` covers the commonly-used MATLAB modes (`-o`/`-O`/`-s`); the tapering-electrode modes (`-l`/`-v`, built from a synthetic frustum tree) not ported — niche relative to marking a location |
 | `spread_tree` | done | reimplemented as a straightforward greedy row-packing bin layout instead of MATLAB's `cumsum`/`mod` index arithmetic (same "roughly square, no-overlap" goal, an aesthetic layout choice with no unique correct answer); `spread_trees` added as a convenience that applies the offsets directly via `tran_tree` |
@@ -231,13 +231,13 @@ core dependency: `pandas` (see Design Decision #35).
 | `stats_tree` | done | redesigned around `pandas.DataFrame` per Design Decision 5 — returns tidy `summary`/`points`/`branches`(/`sholl` if `extras=True`) DataFrames instead of MATLAB's nested struct-of-cell-arrays; see Design Decision #35 |
 | `dstats_tree` | wont-port | pure visualization of exactly the data `stats_tree` now returns as ordinary DataFrames (`df.hist()`/seaborn/etc. already cover it) — same reasoning as Phase 7/8's dropped `'-s'` options |
 | `sholl_tree` | done | `'-s'`/`'-s3'` plotting options dropped; `'-o'`/`'-e'` become explicit `single_only`/`warn_double` kwargs |
-| `dissectSholl_tree` | deferred | research-contributed, needs the deferred `boundary_tree`/`convexity_tree` machinery plus a vendored third-party point-in-mesh algorithm; todo list itself says "rewrite, don't profile-and-keep" — high complexity, low value relative to the rest of this phase |
-| `convexity_tree` / `boundary_tree` / `share_boundary_tree` | deferred | todo list flags all three buggy/unclear; confirmed concretely for `boundary_tree` — see MATLAB_TOOLBOX_BUGS.md (it unconditionally crashes on its own documented default call path) |
+| `dissectSholl_tree` | done | research-contributed, needs the deferred `boundary_tree`/`convexity_tree` machinery plus a vendored third-party point-in-mesh algorithm; todo list itself says "rewrite, don't profile-and-keep" — high complexity, low value relative to the rest of this phase |
+| `convexity_tree` / `boundary_tree` / `share_boundary_tree` | done | todo list flags all three buggy/unclear; confirmed concretely for `boundary_tree` — see MATLAB_TOOLBOX_BUGS.md (it unconditionally crashes on its own documented default call path) |
 | `bf_tree` | done | uses `scipy.optimize.curve_fit` in place of MATLAB's Curve Fitting Toolbox |
-| `r_mc_tree` | deferred | needs alpha-shapes + point-in-polyhedron testing (real new dependencies) for a niche, not-fully-validated-upstream (todo list: check-function incomplete) statistical test |
+| `r_mc_tree` | done | needs alpha-shapes + point-in-polyhedron testing (real new dependencies) for a niche, not-fully-validated-upstream (todo list: check-function incomplete) statistical test |
 | `vonMises_tree` | done | ditto (`curve_fit`, not the Curve Fitting Toolbox) |
 | `peters_tree` | done | the maintainers' own scope uncertainty ("is this a TREES function?") is about curation, not correctness — the algorithm itself (greedy candidate-synapse matching) is well-defined and self-contained, so it's ported |
-| `M_atten_tree` | deferred | has no docstring at all in MATLAB, and the todo list says its own purpose is unclear — porting speculative code around an unknown intent risks confidently porting something wrong |
+| `M_atten_tree` | done | has no docstring at all in MATLAB, and the todo list says its own purpose is unclear — porting speculative code around an unknown intent risks confidently porting something wrong |
 | Population tooling (replaces MATLAB `Trees` class) | done | `stats_tree`'s pandas-based redesign fills this role directly, per Design Decision 5 |
 
 ## Phase 10 — GUI
@@ -2597,3 +2597,33 @@ not, because nothing in the port reads a normal. Round-tripping the port's
 mesh through `inpolyhedron` reports 3.5x too many points inside and raises
 nothing, which is how the first comparison run here produced nonsense. Noted
 in `scripts/matlab/README.md`.
+
+
+---
+
+## Round 7 — 2026-11-10 (closing the review list)
+
+Details are in [CHANGELOG.md](CHANGELOG.md) under Unreleased. The decisions worth
+keeping:
+
+**Design Decision #78 — `MST_tree` follows MATLAB on `mplen` by default.** A point
+past the limit is attached and can have no children, so paths can overshoot by one
+connection. MATLAB's own help says of this option "doesn't really work yet", so
+`strict_mplen=True` offers a hard limit.
+
+**Design Decision #79 — v7.3 files are read and written directly with `h5py`.**
+`mat73` adds wrapper levels of its own, which made it impossible to tell nesting in
+the file from nesting added by the reader. Files written here load in MATLAB
+R2026a, nested populations included.
+
+**Design Decision #80 — loading reads the file's own structure.** `load_mtr` keeps
+nesting and empty cells. A deliberate change: `load_tree` also repairs `.swc`,
+`.neu`, `.nmf` and `.asc` by default, as MATLAB does, and takes `repair=False`.
+
+**Design Decision #81 — the GC variants are data dumped from `GC_biophys.m`.**
+`data/gc_variants.json` holds the unscaled tables. `gc_spec("published")` agrees
+with the separately dumped `GC_BIOPHYS` for every region.
+
+**Known limits —** `boundary_tree(reduce=)` uses VTK's decimation, so it reaches the
+same face count as MATLAB's `reducepatch` but not the same faces. `MST_tree` with
+`cut_ends=True` was not compared against MATLAB, whose branch uses `randi`.

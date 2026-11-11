@@ -24,6 +24,7 @@ from typing import NamedTuple
 import numpy as np
 from scipy import sparse
 
+from ._population import accepts_tree_pairs
 from ._population import accepts_population
 from ._empty import empty_safe
 from .core import NO_PARENT, Tree
@@ -359,6 +360,7 @@ def _swc_regions(column, tree: Tree) -> np.ndarray:
     return region
 
 
+@accepts_population(paired=("X", "Y", "Z", "D", "parent", "R", "swc"))
 def insert_tree(tree: Tree, X=None, Y=None, Z=None, D=None, parent=None,
                 R=None, *, swc=None, radius: bool = False,
                 full_output: bool = False):
@@ -726,6 +728,7 @@ def restrain_tree(
     return tree.copy(X=X, Y=Y, Z=Z)
 
 
+@accepts_tree_pairs(empty=lambda tree1, tree2: tree2 if tree1.n_nodes == 0 else tree1)
 def cat_tree(
     tree1: Tree,
     tree2: Tree,

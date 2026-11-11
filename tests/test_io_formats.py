@@ -291,7 +291,7 @@ def test_a_file_with_no_tree_data_says_so(tmp_path):
 @pytest.mark.parametrize("suffix", [".npz", ".mtr", ".swc", ".nmf"])
 def test_every_writable_format_reloads_through_the_dispatcher(tree, tmp_path, suffix):
     path = pt.save_tree(tree, tmp_path / f"cell{suffix}")
-    back = pt.load_tree(path)
+    back = pt.load_tree(path, repair=False)
     np.testing.assert_allclose(back.X, tree.X)
     np.testing.assert_allclose(back.D, tree.D)
     assert (back.dA != tree.dA).nnz == 0
@@ -306,7 +306,7 @@ def test_the_written_path_is_returned(tree, tmp_path):
 
 
 def test_dispatcher_reads_neu(tmp_path):
-    assert pt.load_tree(_neu("GC")).n_nodes == 3220
+    assert pt.load_tree(_neu("GC"), repair=False).n_nodes == 3220
 
 
 def test_dispatcher_passes_options_to_the_format(tmp_path):

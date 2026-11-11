@@ -16,6 +16,74 @@ is left, per MATLAB file) and [MATLAB_TOOLBOX_BUGS.md](MATLAB_TOOLBOX_BUGS.md)
 
 ---
 
+## Unreleased
+
+### Fixed — rendered scenes now keep the whole cell in frame
+
+- **`save_pov`'s preset scenes** placed the camera from the X extent alone and
+  at a fixed Z. A 4:3 image clipped the top of `sample_tree`, and a cell 500 um
+  from `Z = 0` rendered as a speck or a blank image. The camera is now placed
+  relative to the cell, and POV-Ray works out its distance at render time, so
+  the framing holds at any image size.
+- **`render_tree`** clipped the top and bottom of portrait images, because its
+  camera scale only handled landscape frames.
+- **`save_pov`** now refuses a file name that is a POV-Ray reserved word, such
+  as `v` or `box`. It used to write a file POV-Ray could not parse.
+
+### Fixed — `MST_tree` now matches MATLAB in every mode compared
+
+`avoid_multifurcations` and a binding `mplen` silently left points unattached, because
+only each point's best offer was kept and it was never replaced once ruled out. Growth
+onto a seed tree also differed. Against MATLAB R2026a on single-start, seeded and
+multi-start growth, with and without both options, every parent now matches. `mplen`
+follows MATLAB by default, and `strict_mplen=True` gives a hard limit.
+
+### Fixed — smaller
+
+- `bf_tree` no longer crashes on a slightly negative fitted `k`.
+- `load_mtr` keeps a file's nesting and its empty cells, instead of flattening.
+- A population may contain empty groups, which keep their slot.
+- `BO_tree`, `insert_tree`, `loop_tree`, `realisations_tree` and `ver_tree` now take
+  populations.
+- `sholl_tree`, `bin_tree`, `vonMises_tree`, `bf_tree` and `stats_tree` accept any
+  nesting and tolerate empty trees.
+- `boundary_tree` fills enclosed voids, as `boundary.m` does.
+
+### Added
+
+- `MST_steps` rebuilds the tree at any step of a recorded `MST_tree` run.
+- `pairwise=` on `peters_tree`, `cat_tree` and `share_boundary_tree`, with populations
+  on either side.
+- `save_tree`/`save_mtr` write nested populations and MATLAB v7.3
+  (`version="7.3"`, chosen automatically past v5's 2 GB limit).
+- `load_tree()` and `save_tree(tree)` with no path open a file dialog, and loading can
+  select several files.
+- `load_neurolucida` builds somata from contours, reads spines and markers, joins each
+  tree to its nearest soma, and has `one_soma=` and `full_output=`.
+- `plot_tree`: `mode="blatt"`, `mode="quiver"`, `dim=2`, and `lighting=`, off by default.
+- `plot_sholl_tree`, electrode styles for `pointer_tree`, and `offset`/`wscale`/
+  `horizontal` for `dendrogram_tree`.
+- `cyl_tree(adjacency=True)`, `boundary_tree(reduce=)` and
+  `insert_mechanism(only_nodes=True)`.
+- `gc_spec` builds the `GC_biophys.m` variants by name; see `GC_VARIANTS`.
+
+### Changed
+
+- `load_swc` and `load_tree` repair `.swc`, `.neu`, `.nmf` and `.asc` by default, as
+  MATLAB does. Pass `repair=False` for the file as written.
+- `load_neurolucida` returns one tree per soma rather than one per block.
+- The `matlab` extra now installs `h5py` instead of `mat73`.
+
+### Fixed — Blender geometry for close-ups
+
+- **`build_tree`** now closes its tube ends. Open shells showed as hollow tips
+  and tore apart when the curves were voxel-remeshed into a surface.
+- **`build_tree`** now draws spine regions as a thin neck and a wide head. A
+  linear taper between nodes had been turning each head into a cone. Dendrites
+  still taper smoothly; the new `stepped=` argument chooses the regions.
+
+---
+
 ## 0.3.1 — 2026-09-09
 
 Revalidation of everything that depended on MATLAB's `inpolyhedron`, now that

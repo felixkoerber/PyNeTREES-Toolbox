@@ -14,7 +14,7 @@
 # Or pick a subset:
 #   pip install -e .                # core only (numpy, scipy, pandas)
 #   pip install -e ".[plot]"        # + pyvista, matplotlib, scikit-image
-#   pip install -e ".[matlab]"      # + mat73, for v7.3 .mtr/.mat
+#   pip install -e ".[matlab]"      # + h5py, for v7.3 .mtr/.mat
 #   pip install -e ".[nmf]"         # + h5py, for .nmf
 #   pip install -e ".[stacks]"      # + tifffile, imageio, scikit-image
 #   pip install -e ".[notebook]"    # + ipykernel, ipywidgets, trame
@@ -40,8 +40,7 @@ matplotlib==3.10.7
 scikit-image==0.26.0  # marching cubes for hull_tree's 3D isosurface
 
 # --- MATLAB and HDF5 I/O (optional 'matlab' / 'nmf' extras) ---
-mat73==0.65         # v7.3 .mtr/.mat, which is what current MATLAB writes
-h5py==3.16.0        # .nmf; also a mat73 dependency
+h5py==3.16.0        # .nmf and v7.3 .mtr/.mat, which is what current MATLAB writes
 
 # --- image stacks (optional 'stacks' extra) ---
 tifffile==2026.3.3

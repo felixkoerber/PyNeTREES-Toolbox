@@ -53,7 +53,8 @@ from scipy.optimize import curve_fit
 from scipy.special import iv
 
 from ._compat import resolve_dim
-from ._population import (accepts_population, is_population,
+from ._population import accepts_tree_pairs
+from ._population import (accepts_population, is_population, leaves, map_leaves,
                           require_population)
 from ._empty import empty_safe
 from .core import Tree
@@ -170,13 +171,26 @@ def sholl_tree(
     normalisation, and that choice changes what the answer means, so it
     stays with the caller.
     """
-    if is_population(tree):
-        tree = require_population(tree, "sholl_tree")
+    if isinstance(tree, (list, tuple)):
+        require_population(tree, "sholl_tree")
+        filled = [t for t in leaves(tree) if t.n_nodes > 0]
         if np.ndim(dd) == 0:
             step = float(dd)
-            top = max(np.ceil(2 * eucl_tree(t).max() / step) * step for t in tree)
+            top = max((np.ceil(2 * eucl_tree(t).max() / step) * step for t in filled),
+                      default=0.0)
             dd = np.arange(0.0, top + step, step)
-        return [sholl_tree(t, dd, single_only, warn_double) for t in tree]
+        return map_leaves(lambda t: _sholl_one(t, dd, single_only, warn_double), tree)
+
+    return _sholl_one(tree, dd, single_only, warn_double)
+
+
+def _sholl_one(tree, dd, single_only, warn_double):
+    """One tree's Sholl result. An empty tree crosses nothing at any radius."""
+    if tree.n_nodes == 0:
+        radii = np.empty(0) if np.ndim(dd) == 0 else np.asarray(dd, dtype=float)
+        nothing = np.empty(0)
+        return ShollResult(s=np.zeros(radii.shape), dd=radii, sd=np.zeros(radii.shape),
+                           XP=nothing, YP=nothing, ZP=nothing, iD=nothing)
 
     dd = np.asarray(dd, dtype=float)
     if dd.ndim == 0:
@@ -256,8 +270,11 @@ def sholl_tree(
 def _collect_rootangles(data: Tree | list[Tree] | np.ndarray) -> np.ndarray:
     if isinstance(data, Tree):
         return rootangle_tree(data)
-    if isinstance(data, (list, tuple)) and len(data) > 0 and isinstance(data[0], Tree):
-        return np.concatenate([rootangle_tree(t) for t in data])
+    if isinstance(data, (list, tuple)):
+        members = leaves(data)
+        if any(isinstance(member, Tree) for member in members):
+            filled = [t for t in members if t.n_nodes > 0]
+            return np.concatenate([rootangle_tree(t) for t in filled]) if filled else np.empty(0)
     angles = np.asarray(data, dtype=float)
     if angles.size and (angles.min() < 0 or angles.max() > np.pi):
         raise ValueError("root angles must lie in [0, pi]")
@@ -336,8 +353,12 @@ def bf_tree(
     dim = resolve_dim(dim)
     k, _ = vonMises_tree(data, dim=dim)
     p1, p2, p3 = fit_constants if fit_constants is not None else _BF_FIT_PARAMS[dim]
-    bf = 1 - (1 + (k / p1) ** (1 / p3)) ** (-1 / p2)
-    if bf < 0:
+    bf = 1 - (1 + (float(k) / p1) ** (1 / p3)) ** (-1 / p2)
+    if isinstance(bf, complex):
+        # a negative k to a fractional power: no centripetal bias to speak of
+        bf = 0.0
+        warnings.warn("balancing factor out of usual range", stacklevel=2)
+    elif bf < 0:
         bf = 0.0
         warnings.warn("balancing factor out of usual range", stacklevel=2)
     elif bf > 1:
@@ -351,6 +372,7 @@ def bf_tree(
 # ---------------------------------------------------------------------------
 
 
+@accepts_tree_pairs(empty=lambda tree1, tree2: np.empty((0, 3)))
 def peters_tree(
     tree1: Tree,
     tree2: Tree,
@@ -414,9 +436,10 @@ def _normalize_groups(trees) -> list[list[Tree]]:
     if isinstance(trees, Tree):
         return [[trees]]
     trees = list(trees)
-    if trees and isinstance(trees[0], Tree):
+    if all(isinstance(member, Tree) for member in trees):
         return [trees]
-    return [list(group) for group in trees]
+    # a group can itself be nested, and a bare tree is a group of one
+    return [leaves(group) for group in trees]
 
 
 def _safe_ratio(a: float, b: float) -> float:

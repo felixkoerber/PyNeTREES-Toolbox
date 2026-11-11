@@ -62,6 +62,86 @@ _EOL = "\r\n"
 #: about once per instance.
 _MIN_LENGTH = 1e-4
 
+#: Horizontal field of view of the preset scenes' camera [degrees].
+_CAMERA_ANGLE = 65
+
+#: Room left around the cell in the preset scenes, as a fraction of its size.
+_FRAME_MARGIN = 1.1
+
+#: Words the POV-Ray parser reserves, so a file stem cannot be one of them.
+#: The union of the keyword tables in POV-Ray 3.7's ``reswords.cpp`` and
+#: 3.8's ``reservedwords.cpp``. All of them are lower-case, which is why
+#: POV-Ray's manual recommends a capital letter in every identifier.
+_RESERVED_WORDS = frozenset("""
+aa_level aa_threshold abs absorption accuracy acos acosh adaptive
+adc_bailout agate agate_turb albedo all all_intersections alpha altitude
+always_sample ambient ambient_light angle anisotropy aoi aperture append
+arc_angle area_illumination area_light array asc ascii asin asinh
+assumed_gamma atan atan2 atanh autostop average b_spline background
+bezier_spline bicubic_patch bitwise_and bitwise_or bitwise_xor
+black_hole blend_gamma blend_mode blob blue blur_samples bmp bokeh
+bounded_by box boxed bozo break breakpoint brick brick_size brightness
+brilliance bt2020 bt709 bump_map bump_size bumps camera case caustics
+ceil cells charset checker chr circular clipped_by clock clock_on cmap
+collect color color_map colour colour_map component composite concat
+cone confidence conic_sweep conserve_energy contained_by control0
+control1 coords cos cosh count crackle crand cube cubic cubic_spline
+cubic_wave cutaway_textures cylinder cylindrical datetime debug declare
+default defined degrees density density_file density_map dents
+deprecated df3 dictionary difference diffuse dimension_size dimensions
+direction disc dispersion dispersion_samples dist_exp distance
+distance_maximum div double_illuminate dtag eccentricity else elseif
+emission end error error_bound evaluate exp expand_thresholds exponent
+exr exterior extinction face_indices facets fade_color fade_colour
+fade_distance fade_power falloff falloff_angle false fclose file_exists
+filter finish fisheye flatness flip floor focal_point fog fog_alt
+fog_offset fog_type fopen for form frequency fresnel function gamma
+gather gif global global_lights global_settings gradient granite gray
+gray_threshold green grey grey_threshold hdr height_field hexagon
+hf_gray_16 hf_grey_16 hierarchy hollow hypercomplex if ifdef iff ifndef
+image_map image_pattern importance include inside inside_vector int
+interior interior_texture internal interpolate intersection intervals
+inverse ior irid irid_wavelength isosurface jitter jpeg julia
+julia_fractal lambda lathe lemon leopard light_group light_source
+linear_spline linear_sweep ln load_file local location log look_at
+looks_like low_error_factor macro magnet major_radius mandel map_type
+marble material material_map matrix max max_extent max_gradient
+max_intersections max_iteration max_sample max_trace max_trace_level
+maximum_reuse media media_attenuation media_interaction merge mesh mesh2
+mesh_camera metallic method metric min min_extent minimum_reuse mixed
+mm_per_unit mod mortar natural_spline nearest_count no no_bump_scale
+no_image no_radiosity no_reflection no_shadow noise_generator normal
+normal_indices normal_map normal_vectors now number_of_sides
+number_of_tiles number_of_waves obj object octaves off offset omega
+omnimax on once onion open optional orient orientation orthographic ovus
+panoramic parallel parametric pass_through pattern pavement perspective
+pgm phase phong phong_size photons pi pigment pigment_map
+pigment_pattern planar plane png point_at polarity poly poly_wave
+polygon polynomial pot potential pow ppm precision precompute prefix
+premultiplied pretrace_end pretrace_start prism prod projected_through
+pwr quadratic_spline quadric quartic quaternion quick_color quick_colour
+quilted radial radians radiosity radius rainbow ramp_wave rand range
+ratio read reciprocal recursion_limit red reflection reflection_exponent
+refraction render repeat rgb rgbf rgbft rgbt right ripples rotate
+roughness samples save_file sblue scale scallop_wave scattering seed
+select sgreen shadowless sin sine_wave sinh sint16be sint16le sint32be
+sint32le sint8 size sky sky_sphere slice slope slope_map smooth
+smooth_triangle solid sor spacing specular sphere sphere_sweep spherical
+spiral1 spiral2 spline split_union spotlight spotted sqr sqrt square
+sred srgb srgbf srgbft srgbt statistics steps str strcmp strength strlen
+strlwr strupr sturm substr subsurface suffix sum superellipsoid switch
+sys t tan tanh target tau text texture texture_list texture_map tga
+thickness threshold tiff tightness tile2 tiles tiling tolerance toroidal
+torus trace transform translate translucency transmit triangle
+triangle_wave triangular true ttf turb_depth turbulence type u u_steps
+uint16be uint16le uint8 ultra_wide_angle undef union unofficial up
+use_alpha use_color use_colour use_index user_defined utf8 uv_indices
+uv_mapping uv_vectors v v_steps val variance vaxis_rotate vcross vdot
+version vertex_vectors vlength vnormalize vrotate vstr vturbulence
+warning warp water_level waves while width wood wrinkles write x xyz y
+yes z
+""".split())
+
 #: The scene presets MATLAB spells ``-s1`` .. ``-s3``. Each is
 #: ``(background, ambient, description)``; the lights and camera are shared.
 POV_STYLES: dict[str, tuple[str, float, str]] = {
@@ -138,7 +218,9 @@ def save_pov(
     path : str or Path
         ``.pov`` is appended if missing. The stem becomes the POV-Ray
         identifier the geometry is declared under, so it has to be a legal
-        one -- letters, digits and underscores, not starting with a digit.
+        one -- letters, digits and underscores, not starting with a digit,
+        and not a POV-Ray reserved word such as ``v`` or ``box``. A name
+        containing a capital letter is always safe.
     v : array_like, optional
         One value per node, colour-coded through ``viridis``. Without it
         every segment gets ``color``.
@@ -158,7 +240,9 @@ def save_pov(
         Also write the ``sh<name>.pov`` scene file in this style; ``None``
         writes only the geometry. See :data:`POV_STYLES`.
     width, height : int
-        Only used to set the camera's aspect ratio in the scene file.
+        The image size suggested in the scene file's render command. The
+        camera adapts to whatever size is actually rendered, keeping the
+        whole cell in frame.
 
     Returns
     -------
@@ -248,6 +332,12 @@ def _identifier(stem: str) -> str:
             f"{stem!r} contains {bad}, which POV-Ray does not allow in an "
             f"identifier. Rename the file to letters, digits and underscores."
         )
+    if stem in _RESERVED_WORDS:
+        raise ValueError(
+            f"{stem!r} is a POV-Ray reserved word, so it cannot be used as an "
+            f"identifier. Rename the file; a name containing a capital letter "
+            f"is always safe."
+        )
     return stem
 
 
@@ -259,9 +349,22 @@ def _scene(name: str, geometry_file: str, tree: Tree, style: str,
     xyz = np.column_stack([tree.X, tree.Y, tree.Z])
     low, high = xyz.min(axis=0), xyz.max(axis=0)
     centre = (low + high) / 2
-    # far enough back that the widest horizontal extent fills the frame at
-    # the 65-degree angle below; MATLAB uses the X extent for both
-    reach = float(max(high[0] - low[0], 1.0))
+    span_x, span_y = float(max(high[0] - low[0], 1.0)), float(max(high[1] - low[1], 1.0))
+    # lights and the ground plane sit this far from the cell
+    reach = max(span_x, span_y)
+    near = float(low[2])
+
+    # Everything is placed relative to the cell, and the distance is left for
+    # POV-Ray to work out when it renders, because only then is the image's
+    # aspect ratio known. It is measured to the cell's nearest face, where a
+    # perspective camera sees the least, so the whole cell fits in any frame.
+    # MATLAB uses the X extent at a fixed Z, which crops a tall cell and loses
+    # one that sits away from Z = 0.
+    distance = (
+        f"{_FRAME_MARGIN} * max({span_x:.4f}, "
+        f"{span_y:.4f} * image_width / image_height) "
+        f"/ (2 * tan(radians({_CAMERA_ANGLE / 2})))"
+    )
 
     finish = (f"finish {{ ambient {ambient:.2g} }}" if ambient
               else "finish { ambient 0.15 diffuse 0.8 specular 0.2 }")
@@ -277,9 +380,9 @@ def _scene(name: str, geometry_file: str, tree: Tree, style: str,
         "",
         "camera {",
         "  right     x * image_width / image_height",
-        f"  location  <{centre[0]:.4f}, {centre[1]:.4f}, {-reach:.4f}>",
-        f"  look_at   <{centre[0]:.4f}, {centre[1]:.4f}, 0>",
-        "  angle     65",
+        f"  location  <{centre[0]:.4f}, {centre[1]:.4f}, {near:.4f} - {distance}>",
+        f"  look_at   <{centre[0]:.4f}, {centre[1]:.4f}, {centre[2]:.4f}>",
+        f"  angle     {_CAMERA_ANGLE}",
         "}",
         "",
     ]
@@ -287,16 +390,16 @@ def _scene(name: str, geometry_file: str, tree: Tree, style: str,
     if style == "fluorescence":
         lines += [
             "light_source { <%.4f, %.4f, %.4f> color rgb <0.4, 1.0, 0.4> "
-            "shadowless }" % (centre[0], centre[1], -reach),
+            "shadowless }" % (centre[0], centre[1], near - reach),
             f"object {{ {name} pigment {{ color rgb <0.15, 1.0, 0.15> }} "
             f"finish {{ ambient 0.9 }} }}",
         ]
     elif style == "coral":
         lines += [
             "light_source { <%.4f, %.4f, %.4f> color White }"
-            % (centre[0], high[1] + reach, -reach),
+            % (centre[0], high[1] + reach, near - reach),
             "light_source { <%.4f, %.4f, %.4f> color rgb <0.3,0.3,0.4> "
-            "shadowless }" % (centre[0], low[1] - reach, reach),
+            "shadowless }" % (centre[0], low[1] - reach, centre[2] + reach),
             f"object {{ {name} pigment {{ color rgb <1.0, 0.45, 0.35> }} "
             f"{finish} }}",
             "plane { z, %.4f pigment { color rgb <0.6,0.65,0.7> } }"
@@ -305,7 +408,7 @@ def _scene(name: str, geometry_file: str, tree: Tree, style: str,
     else:
         lines += [
             "light_source { <%.4f, %.4f, %.4f> color White shadowless }"
-            % (centre[0], centre[1], -reach),
+            % (centre[0], centre[1], near - reach),
             f"object {{ {name} {finish} }}",
         ]
     return lines

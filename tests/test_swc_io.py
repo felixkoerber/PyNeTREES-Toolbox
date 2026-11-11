@@ -18,7 +18,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_load_swc_single_root_real_reconstruction():
-    tree = load_swc(FIXTURES / "25HSS.swc")
+    tree = load_swc(FIXTURES / "25HSS.swc", repair=False)
     assert isinstance(tree, Tree)
     assert tree.n_nodes == 2252  # file has 2252 data rows (no comments)
     assert ver_tree(tree, quiet=True) == []
@@ -30,17 +30,17 @@ def test_load_swc_single_root_real_reconstruction():
 def test_load_swc_handles_unsorted_noncontiguous_indices():
     # test02.swc node indices are out of order and not 1..N in file order;
     # this is the case MATLAB's load_tree.m explicitly corrects for.
-    tree = load_swc(FIXTURES / "test02.swc")
+    tree = load_swc(FIXTURES / "test02.swc", repair=False)
     assert isinstance(tree, Tree)
     assert tree.n_nodes == 11
     assert ver_tree(tree, quiet=True) == []
 
 
 def test_swc_round_trip(tmp_path):
-    original = load_swc(FIXTURES / "25HSS.swc")
+    original = load_swc(FIXTURES / "25HSS.swc", repair=False)
     out_path = tmp_path / "roundtrip.swc"
     save_swc(original, out_path)
-    reloaded = load_swc(out_path)
+    reloaded = load_swc(out_path, repair=False)
 
     assert isinstance(reloaded, Tree)
     assert reloaded.n_nodes == original.n_nodes
@@ -64,7 +64,7 @@ def test_load_swc_splits_multiple_roots_into_separate_trees(tmp_path):
         "4 1 1 0 0 1 3\n"
         "5 1 2 0 0 1 4\n"
     )
-    trees = load_swc(multi)
+    trees = load_swc(multi, repair=False)
     assert isinstance(trees, list)
     assert sorted(t.n_nodes for t in trees) == [2, 3]
     for tree in trees:

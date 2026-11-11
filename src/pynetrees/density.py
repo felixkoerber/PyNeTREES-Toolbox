@@ -31,8 +31,10 @@ import warnings
 from typing import NamedTuple
 
 import numpy as np
+from scipy import sparse
 
 from ._compat import resolve_dim
+from ._population import accepts_tree_pairs
 from ._population import accepts_population
 from ._empty import empty_safe
 from .core import Tree
@@ -540,6 +542,7 @@ def vhull_tree(tree: Tree, nodes=None, boundary=None, thr: float = 25.0,
 # ---------------------------------------------------------------------------
 
 
+@accepts_tree_pairs(empty=lambda tree1, tree2: 0.0)
 def share_boundary_tree(tree1: Tree, tree2: Tree, thr: float = 25.0,
                         sr: float = 5.0) -> float:
     """Volume [um^3] shared by two trees' space-filling hulls.
@@ -634,7 +637,7 @@ class Boundary(NamedTuple):
 @empty_safe(_empty_boundary)
 def boundary_tree(tree: Tree, shrink: float | None = None,
                   dim: int | None = None, nodes=None, *,
-                  c: float | None = None) -> Boundary:
+                  c: float | None = None, reduce: float | None = None) -> Boundary:
     """Concave boundary (alpha shape) around a tree's points.
 
     Parameters
@@ -654,6 +657,11 @@ def boundary_tree(tree: Tree, shrink: float | None = None,
         factor to ``1 - c``, so that a convex cell is wrapped loosely and a
         concave one tightly. Supplying ``c`` does exactly that. Mutually
         exclusive with ``shrink``.
+    reduce : float in (0, 1), optional
+        3D only. Simplify the surface to about this fraction of its faces
+        (``0.5`` is what MATLAB's `boundary_tree` applies through
+        ``reducepatch``). ``volume``, ``points`` and ``simplices`` keep the
+        values of the full shape. Needs PyVista.
 
     Returns
     -------
@@ -710,7 +718,60 @@ def boundary_tree(tree: Tree, shrink: float | None = None,
     )
     if nodes is not None:
         coords = coords[np.asarray(nodes, dtype=int)]
-    return _alpha_shape(coords, shrink)
+    result = _alpha_shape(coords, shrink)
+    if reduce is not None:
+        result = _reduced(result, reduce)
+    return result
+
+
+def _reduced(boundary: Boundary, fraction: float) -> Boundary:
+    """The same boundary with a simplified surface."""
+    if boundary.points.shape[1] != 3:
+        raise ValueError("reduce only applies to a 3D boundary")
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(f"reduce must lie in (0, 1), got {fraction}")
+    try:
+        import pyvista as pv
+    except ImportError as error:
+        raise ImportError("reduce needs PyVista: pip install 'pynetrees[plot]'") from error
+
+    faces = np.column_stack([np.full(len(boundary.faces), 3), boundary.faces])
+    surface = pv.PolyData(boundary.vertices, faces.ravel()).decimate(1.0 - fraction)
+    return boundary._replace(vertices=np.asarray(surface.points),
+                             faces=surface.faces.reshape(-1, 4)[:, 1:])
+
+
+def _fill_voids(triangulation, keep: np.ndarray) -> np.ndarray:
+    """Add back empty pockets that are fully enclosed by the shape.
+
+    MATLAB's ``boundary.m`` sets ``HoleThreshold`` to the volume of the shape
+    while it is still the convex hull, so every enclosed pocket qualifies. A
+    pocket is a connected group of discarded simplices; one that reaches the
+    outside of the triangulation is not enclosed.
+    """
+    from scipy.sparse.csgraph import connected_components
+
+    empty = np.flatnonzero(~keep)
+    if len(empty) == 0:
+        return keep
+    position = np.full(len(keep), -1, dtype=int)
+    position[empty] = np.arange(len(empty))
+
+    neighbours = triangulation.neighbors[empty]
+    rows = np.repeat(np.arange(len(empty)), neighbours.shape[1])
+    across = neighbours.ravel()
+    linked = (across >= 0) & (position[across] >= 0)
+    graph = sparse.coo_matrix(
+        (np.ones(int(linked.sum())), (rows[linked], position[across[linked]])),
+        shape=(len(empty), len(empty)))
+    count, labels = connected_components(graph, directed=False)
+
+    open_to_outside = np.zeros(count, dtype=bool)
+    open_to_outside[labels[(neighbours == -1).any(axis=1)]] = True
+
+    filled = keep.copy()
+    filled[empty[~open_to_outside[labels]]] = True
+    return filled
 
 
 def _alpha_shape(coords: np.ndarray, shrink: float) -> Boundary:
@@ -732,7 +793,7 @@ def _alpha_shape(coords: np.ndarray, shrink: float) -> Boundary:
     # circumradii *is* `alphaSpectrum`; the shrink factor picks a rank
     # within the part of that spectrum at or above a critical radius, and
     # `shrink = 1` lands on the critical radius itself.
-    spectrum = np.unique(radii)
+    spectrum = np.sort(radii)    # repeats count: the rank is over all of them
     critical = _one_region_cutoff(triangulation.simplices, radii, len(coords))
     above = spectrum[spectrum >= critical]
 
@@ -745,7 +806,7 @@ def _alpha_shape(coords: np.ndarray, shrink: float) -> Boundary:
     else:
         rank = max(int(np.ceil((1.0 - shrink) * len(above))), 1)
         cutoff = above[rank - 1]
-    keep = triangulation.simplices[radii <= cutoff]
+    keep = triangulation.simplices[_fill_voids(triangulation, radii <= cutoff)]
 
     faces = _boundary_faces(keep)
     used = np.unique(faces)

@@ -93,6 +93,7 @@ def MST_tree(
     cut_ends: bool = False,
     record: bool = False,
     full_output: bool = False,
+    strict_mplen: bool = False,
 ):
     """Grow synthetic tree(s) connecting a cloud of points.
 
@@ -152,9 +153,15 @@ def MST_tree(
         positive entry in ``dist`` -- the marked "cut ends". Requires
         ``dist``.
     record : bool, default False
-        MATLAB's ``'-t'``. Also return the growth history.
+        MATLAB's ``'-t'``. Also return the growth history, from which
+        :func:`MST_steps` rebuilds the tree at any step.
     full_output : bool, default False
         Return :class:`MSTResult` rather than just the tree(s).
+    strict_mplen : bool, default False
+        How ``mplen`` is enforced. By default it behaves as in MATLAB: a point
+        whose path would exceed ``mplen`` is still attached, and nothing can
+        then grow from it, so paths can overshoot by one connection. With
+        ``True`` no path ever exceeds ``mplen``.
 
     Returns
     -------
@@ -174,7 +181,7 @@ def MST_tree(
     ``record`` returns the growth **log**, not a list of intermediate trees
     as MATLAB does: any intermediate state is a prefix of the log, so
     storing whole trees per step would be quadratic in memory for
-    information already present.
+    information already present. :func:`MST_steps` rebuilds them on request.
 
     **Verified against MATLAB R2026a** (2026-09-08) on four fixed clouds --
     150 points in 2-D, 200 in 3-D, 300 shared between three seeds, and one
@@ -192,7 +199,13 @@ def MST_tree(
     # growing onto existing trees: their nodes go in front of the cloud, so
     # that one index space covers both and the loop below needs no special
     # case for "is this an original node"
-    seeds = _seed_trees(start)
+    if isinstance(start, Tree):
+        seeds = [start]
+    elif (isinstance(start, (list, tuple)) and start
+          and all(isinstance(t, Tree) for t in start)):
+        seeds = list(start)
+    else:
+        seeds = []
     offsets = np.cumsum([0] + [t.n_nodes for t in seeds]) if seeds else np.array([0])
     n_seed = int(offsets[-1]) if seeds else 0
     if seeds:
@@ -253,6 +266,8 @@ def MST_tree(
         # already determines -- start it from there rather than from zero,
         # or the new material is grown as if the seed had no extent
         plen[block] = Pvec_tree(seed, len_tree(seed))
+        if not strict_mplen:
+            plen[block[plen[block] > mplen]] = np.nan   # cannot grow from these
         children_count[block] = np.asarray(seed.dA.sum(axis=0)).ravel()
         order[tree_index] = block.tolist()
 
@@ -275,6 +290,10 @@ def MST_tree(
     # would let one tree's cheaper offer silently discard the other's.
     best_cost = np.full((len(starts), n), np.inf)
     heaps: list[list[tuple[float, int, int]]] = [[] for _ in starts]
+    # which points each tree may ever connect; only seeded growth restricts it
+    in_reach = np.ones((len(starts), n), dtype=bool)
+    # the node behind each tree's current best offer for each point
+    offered_by = np.full((len(starts), n), -1, dtype=int)
 
     def extra_cost(node: int, point: int) -> float:
         """The `dist` preference term, in the same units as distance."""
@@ -284,13 +303,45 @@ def MST_tree(
             1.0 - dist[node - n_seed, point - n_seed] / dist_scale
         )
 
+    def research(tree_index: int, point: int) -> None:
+        """Re-offer ``point`` the best attachment this tree can still give.
+
+        Called when the offer it was holding has been ruled out. Only the best
+        offer per point is kept, so the alternatives have to be found again --
+        MATLAB does the same when a node turns into a branch point.
+        """
+        nodes = np.array(order[tree_index])
+        spans = np.linalg.norm(coords[nodes] - coords[point], axis=1)
+        usable = (spans <= thr) & ~np.isnan(plen[nodes])
+        if avoid_multifurcations:
+            usable &= children_count[nodes] < 2
+        if growable is not None:
+            usable &= growable[nodes]
+        if strict_mplen:
+            usable &= plen[nodes] + spans <= mplen
+        best_cost[tree_index, point] = np.inf
+        offered_by[tree_index, point] = -1
+        if not usable.any():
+            return
+        nodes, spans = nodes[usable], spans[usable]
+        costs = spans + bf * plen[nodes]
+        if dist is not None:
+            costs += [extra_cost(int(node), point) for node in nodes]
+        winner = int(np.argmin(costs))
+        best_cost[tree_index, point] = float(costs[winner])
+        offered_by[tree_index, point] = int(nodes[winner])
+        heapq.heappush(heaps[tree_index],
+                       (float(costs[winner]), point, int(nodes[winner])))
+
     def push_from(node: int, tree_index: int) -> None:
+        if np.isnan(plen[node]):
+            return
         if avoid_multifurcations and children_count[node] >= 2:
             return
         if growable is not None and not growable[node]:
             return
         for p in kdtree.query_ball_point(coords[node], r=thr):
-            if p == node or connected[p]:
+            if p == node or connected[p] or not in_reach[tree_index, p]:
                 continue
             cost = (
                 float(np.linalg.norm(coords[p] - coords[node]))
@@ -299,13 +350,33 @@ def MST_tree(
             )
             if cost < best_cost[tree_index, p]:
                 best_cost[tree_index, p] = cost
+                offered_by[tree_index, p] = node
                 heapq.heappush(heaps[tree_index], (cost, p, node))
 
     for tree_index, s in enumerate(starts):
         if seeds:
-            # any node of a seed tree can take a new branch, not just its root
-            for node in range(offsets[tree_index], offsets[tree_index + 1]):
-                push_from(node, tree_index)
+            # As in MATLAB, a point's first offer comes from the seed node
+            # nearest to it, by distance alone, and a point further than `thr`
+            # from every seed node never joins this tree. Later offers from
+            # newly grown nodes use the full cost.
+            block = np.arange(offsets[tree_index], offsets[tree_index + 1])
+            if avoid_multifurcations:
+                block = block[children_count[block] < 2]
+            in_reach[tree_index] = False
+            if len(block) == 0:
+                continue
+            spans, nearest = cKDTree(coords[block]).query(coords[n_seed:])
+            for offset, (span, node) in enumerate(zip(spans, block[nearest])):
+                if span > thr:
+                    continue
+                point = n_seed + offset
+                in_reach[tree_index, point] = True
+                if connected[point] or np.isnan(plen[node]):
+                    continue
+                cost = float(span + bf * plen[node] + extra_cost(int(node), point))
+                best_cost[tree_index, point] = cost
+                offered_by[tree_index, point] = int(node)
+                heapq.heappush(heaps[tree_index], (cost, point, int(node)))
         else:
             push_from(int(s), tree_index)
 
@@ -316,21 +387,29 @@ def MST_tree(
             cost, p, attach = heapq.heappop(heap)
             if connected[p] or cost > best_cost[tree_index, p]:
                 continue  # stale entry (lazy deletion), or claimed meanwhile
-            if avoid_multifurcations and children_count[attach] >= 2:
-                continue
             span = float(np.linalg.norm(coords[p] - coords[attach]))
             new_plen = plen[attach] + span
-            if new_plen > mplen:
+            if ((avoid_multifurcations and children_count[attach] >= 2)
+                    or (strict_mplen and new_plen > mplen)):
+                research(tree_index, p)
                 continue
             connected[p] = True
             owner[p] = tree_index
             parent[p] = attach
-            plen[p] = new_plen
+            # past mplen a node stays on the tree but can no longer be a parent
+            plen[p] = np.nan if new_plen > mplen else new_plen
             children_count[attach] += 1
             order[tree_index].append(p)
             if record:
                 history.append((tree_index, p, attach))
             push_from(p, tree_index)
+            if avoid_multifurcations and children_count[attach] >= 2:
+                # Must happen now rather than when the old offer surfaces: a
+                # seeded point's first offer is the nearest node, not the
+                # cheapest, so its replacement can cost less than it did.
+                waiting = (offered_by[tree_index] == attach) & ~connected
+                for point in np.flatnonzero(waiting).tolist():
+                    research(tree_index, point)
             return True
         return False
 
@@ -382,15 +461,51 @@ def MST_tree(
     return result
 
 
-def _seed_trees(start) -> list[Tree]:
-    """The seed trees in ``start``, or an empty list if it names indices."""
-    if isinstance(start, Tree):
-        return [start]
-    if isinstance(start, (list, tuple)) and start and all(
-        isinstance(t, Tree) for t in start
-    ):
-        return list(start)
-    return []
+def MST_steps(result: MSTResult, steps=None) -> list:
+    """Rebuild the growing tree(s) at chosen steps of an :func:`MST_tree` run.
+
+    Parameters
+    ----------
+    result : MSTResult
+        From ``MST_tree(..., record=True, full_output=True)``.
+    steps : int or sequence of int, optional
+        How many connections have been made in each state. ``0`` is the start
+        of growth, and negative numbers count from the end. Defaults to every
+        step.
+
+    Returns
+    -------
+    list
+        One state per step: a :class:`Tree`, or a list of them when there
+        were several start points. MATLAB's ``'-t'`` time-lapse output.
+
+    Notes
+    -----
+    Nodes are added to a tree in the order they attach, so the tree at any
+    step is simply the first nodes of the final tree.
+    """
+    if result.history is None:
+        raise ValueError("MST_steps needs MST_tree(..., record=True, full_output=True)")
+
+    single = isinstance(result.trees, Tree)
+    finals = [result.trees] if single else list(result.trees)
+    owners = result.history[:, 0]
+    n_steps = len(owners)
+    added = np.array([np.count_nonzero(owners == i) for i in range(len(finals))])
+    first_nodes = np.array([t.n_nodes for t in finals]) - added
+
+    if steps is None:
+        steps = np.arange(n_steps + 1)
+    states = []
+    for step in np.atleast_1d(np.asarray(steps, dtype=int)).tolist():
+        if not -n_steps - 1 <= step <= n_steps:
+            raise ValueError(f"step {step} is outside 0..{n_steps}")
+        step = step % (n_steps + 1)
+        counts = first_nodes + [np.count_nonzero(owners[:step] == i)
+                                for i in range(len(finals))]
+        state = [t.reindexed(np.arange(c)) for t, c in zip(finals, counts)]
+        states.append(state[0] if single else state)
+    return states
 
 
 #: Region name given to nodes a growth adds onto a seed tree.

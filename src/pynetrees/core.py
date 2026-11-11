@@ -106,8 +106,8 @@ class Tree:
         other shape are treated as whole-cell metadata and copied across
         unchanged. See :func:`_reindex_meta`.
 
-        ``.npz`` round-trips it (:func:`~pynetrees.io.save_npz`); the other
-        formats have nowhere to put it and drop it.
+        ``.npz`` and ``.mtr`` round-trip it; the other formats have nowhere
+        to put it and drop it.
     """
 
     __slots__ = (
@@ -347,6 +347,9 @@ def ver_tree(tree: Tree, quiet: bool = False) -> list[str]:
     list[str]
         Human-readable problem descriptions; empty if the tree is well-formed.
     """
+    if isinstance(tree, (list, tuple)):
+        return [ver_tree(member, quiet=quiet) for member in tree]
+
     issues: list[str] = []
 
     if tree.dA.ndim != 2:

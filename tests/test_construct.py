@@ -65,10 +65,20 @@ def test_MST_tree_respects_distance_threshold():
 def test_MST_tree_respects_max_path_length():
     X = np.array([0.0, 40.0, 80.0])  # chain would need path length 80
     Y = np.zeros(3)
-    tree, connected = MST_tree(X, Y, start=0, thr=100.0, mplen=50.0, full_output=True)[:2]
+    tree, connected = MST_tree(X, Y, start=0, thr=100.0, mplen=50.0, full_output=True,
+                               strict_mplen=True)[:2]
     # third point (path length 80 via the chain) must be excluded
     assert connected[2] == False  # noqa: E712
     assert PL_tree(tree).max() <= 50.0 + 1e-6 or tree.n_nodes < 3
+
+
+def test_MST_tree_max_path_length_overshoots_by_one_connection_by_default():
+    """MATLAB attaches the point that goes past the limit, then stops there."""
+    X = np.array([0.0, 40.0, 80.0, 120.0])
+    Y = np.zeros(4)
+    tree, connected = MST_tree(X, Y, start=0, thr=45.0, mplen=50.0, full_output=True)[:2]
+    assert connected.tolist() == [True, True, True, False]
+    assert tree.n_nodes == 3
 
 
 def test_MST_tree_balancing_factor_trades_wire_for_path_length():

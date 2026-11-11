@@ -137,6 +137,7 @@ def barcode_tree(tree: Tree, v: np.ndarray | None = None, *,
     return np.column_stack([death - reach, death])
 
 
+@accepts_population(paired="v")
 def realisations_tree(tree: Tree | np.ndarray, v: np.ndarray | None = None, *,
                       mode: str = "length") -> int:
     """How many distinct trees share this tree's barcode.

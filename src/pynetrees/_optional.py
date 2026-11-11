@@ -37,8 +37,8 @@ OPTIONAL_FEATURES: dict[str, tuple[str, tuple[str, ...], str]] = {
         "hull_tree(dim=3), stacks.skeletonize_stack",
     ),
     "MATLAB v7.3 files": (
-        "matlab", ("mat73",),
-        "reading .mtr/.mat written by a current MATLAB (v7.3 is its default)",
+        "matlab", ("h5py",),
+        "reading and writing v7.3 .mtr/.mat files (the default of a current MATLAB)",
     ),
     "HDF5 .nmf files": (
         "nmf", ("h5py",),

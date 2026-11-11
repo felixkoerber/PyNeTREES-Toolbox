@@ -261,10 +261,10 @@ MAY_RAISE = {"MST_tree", "BCT_tree", "isBCT_tree", "allBCTs_tree",
 
 def _single_tree_entry_points():
     for name in sorted(pt.__all__):
-        if name in MAY_RAISE or name[0].isupper():
-            continue
+        if name in MAY_RAISE or name == "save_tree":
+            continue     # save_tree with no path opens a file dialog
         function = getattr(pt, name)
-        if not callable(function):
+        if not callable(function) or inspect.isclass(function):
             continue
         try:
             parameters = list(inspect.signature(function).parameters.values())

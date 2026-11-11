@@ -4,8 +4,9 @@ What is left from `PyNeTREES code review.md`, in the order I would do it, with
 an assessment of each. Written 2026-09-08, after the Round 4 pass recorded at
 the bottom of [PORT_STATUS.md](PORT_STATUS.md).
 
-Status of the suite: **932 passed, 17 skipped** (the 17 need `bpy`, which
-cannot coexist with numpy 2 — see §5).
+> **Superseded on 2026-11-10.** Everything below has been closed; see Round 7 in
+> [PORT_STATUS.md](PORT_STATUS.md) and the Unreleased section of
+> [CHANGELOG.md](CHANGELOG.md). Kept as the record of the reasoning.
 
 ---
 

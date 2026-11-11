@@ -224,6 +224,72 @@ def test_the_whole_tree_is_in_frame(tmp_path):
     assert not lit[:, 0].any() and not lit[:, -1].any()
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("size", [(160, 320), (240, 320), (320, 320)])
+def test_the_whole_tree_is_in_frame_when_the_image_is_not_landscape(tmp_path, size):
+    """`ortho_scale` is the *height* of a portrait view, not its width, so a
+    formula written for landscape frames clips the top and bottom."""
+    from PIL import Image
+
+    path = blender.render_tree(pt.sample_tree(), tmp_path / "cell.png", size=size,
+                               samples=4)
+    lit = np.asarray(Image.open(path).convert("RGB")).max(axis=2) > 120
+    assert lit.any()
+    assert not lit[0].any() and not lit[-1].any()
+    assert not lit[:, 0].any() and not lit[:, -1].any()
+
+
+def test_tube_ends_are_closed(tree):
+    """Open shells show as hollow tips and tear apart under voxel remeshing."""
+    assert all(obj.data.use_fill_caps for obj in blender.build_tree(tree))
+
+
+def _spine_object(cell, **options):
+    objects = blender.build_tree(cell, **options)
+    return next(o for o in objects if "spine" in o.name)
+
+
+def _radii(spline, curve):
+    return [point.radius * curve.bevel_depth for point in spline.points]
+
+
+def test_a_spine_is_a_thin_neck_and_a_wide_head(tree):
+    """Each segment takes its end node's diameter, so the head is not a cone."""
+    spiny = pt.spines_tree(tree, spines=5, neck_diameter=0.3, head_diameter=0.9, rng=1)
+    obj = _spine_object(spiny)
+    assert len(obj.data.splines) == 5
+    for spline in obj.data.splines:
+        assert np.allclose(_radii(spline, obj.data), [0.15, 0.15, 0.45, 0.45], atol=1e-5)
+
+
+def test_spine_regions_are_stepped_when_labelled_separately(tree):
+    spiny = pt.spines_tree(tree, spines=3, neck_diameter=0.3, head_diameter=0.9,
+                           separate_regions=True, rng=1)
+    objects = {o.name.split("_", 1)[1]: o for o in blender.build_tree(spiny)}
+    # separate regions are separate sections, so each part is its own cylinder
+    for region, radius in (("spine_neck", 0.15), ("spine_head", 0.45)):
+        curve = objects[region].data
+        assert np.allclose(_radii(curve.splines[0], curve), radius, atol=1e-5)
+
+
+def test_stepping_can_be_switched_off(tree):
+    spiny = pt.spines_tree(tree, spines=3, rng=1)
+    obj = _spine_object(spiny, stepped=())
+    assert all(len(spline.points) == 3 for spline in obj.data.splines)
+
+
+def test_dendrites_of_a_spiny_cell_still_taper(tree):
+    """Stepping is for spines: a dendrite keeps one control point per node."""
+    spiny = pt.spines_tree(tree, spines=5, rng=1)
+
+    def dendrite_points(**options):
+        objects = blender.build_tree(spiny, **options)
+        dendrite = next(o for o in objects if "dendrite" in o.name)
+        return sum(len(spline.points) for spline in dendrite.data.splines)
+
+    assert dendrite_points() == dendrite_points(stepped=())
+
+
 def test_an_unknown_view_is_rejected(tree, tmp_path):
     with pytest.raises(ValueError, match="view must be"):
         blender.render_tree(tree, tmp_path / "x.png", view="top")

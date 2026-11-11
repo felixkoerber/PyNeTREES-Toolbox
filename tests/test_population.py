@@ -82,12 +82,17 @@ def test_a_tuple_of_trees_works_too(trees):
     assert len(pt.len_tree(tuple(trees))) == len(trees)
 
 
-def test_an_empty_group_says_what_is_wrong():
-    """An empty list would otherwise fall through to a per-tree
-    computation and fail somewhere unhelpful."""
-    for call in (lambda: pt.gene_tree([]), lambda: pt.dist_tree([], [50]),
-                 lambda: pt.bin_tree([]), lambda: pt.sholl_tree([]),
-                 lambda: pt.len_tree([]), lambda: pt.resample_tree([])):
+def test_an_empty_group_keeps_its_slot(trees):
+    """An empty group in a population maps to an empty group, so that the
+    indices around it hold."""
+    assert pt.len_tree([]) == []
+    result = pt.len_tree([[], [trees[0]]])
+    assert result[0] == [] and len(result[1]) == 1
+
+
+def test_pooled_functions_refuse_an_empty_group():
+    """These compute one thing across the group, which needs a group."""
+    for call in (lambda: pt.bin_tree([]), lambda: pt.sholl_tree([])):
         with pytest.raises(ValueError, match="empty list of trees"):
             call()
 
@@ -335,10 +340,45 @@ def test_stats_tree_still_takes_a_group(trees):
     assert len(stats["summary"]) == len(trees)
 
 
-def test_two_tree_functions_are_left_alone(trees):
-    """"A list of trees" is ambiguous for these -- all pairs? zipped? -- so
-    the caller writes the loop they mean."""
-    assert not hasattr(pt.cat_tree, "__population_paired__")
+def test_two_tree_functions_run_every_pairing_by_default(trees):
+    a, b = trees[0], trees[1]
+    result = pt.peters_tree([a, [b]], [a, b])
+    assert isinstance(result, list) and len(result) == 2
+    assert len(result[0]) == 2                  # a against [a, b]
+    assert len(result[1]) == 1 and len(result[1][0]) == 2   # [b] against [a, b]
+    np.testing.assert_array_equal(result[0][1], pt.peters_tree(a, b))
+
+
+def test_two_tree_functions_can_match_element_by_element(trees):
+    a, b = trees[0], trees[1]
+    result = pt.peters_tree([a, [b]], [b, [a]], pairwise=False)
+    np.testing.assert_array_equal(result[0], pt.peters_tree(a, b))
+    np.testing.assert_array_equal(result[1][0], pt.peters_tree(b, a))
+
+
+def test_element_wise_pairs_need_the_same_nesting(trees):
+    a, b = trees[0], trees[1]
+    with pytest.raises(ValueError, match="same nesting"):
+        pt.peters_tree([a, b], [a], pairwise=False)
+    with pytest.raises(ValueError, match="same nesting"):
+        pt.peters_tree([a, b], [a, [b]], pairwise=False)
+    with pytest.raises(ValueError, match="same nesting"):
+        pt.peters_tree(a, [a], pairwise=False)
+
+
+def test_a_single_tree_can_meet_a_population(trees):
+    a, b = trees[0], trees[1]
+    assert len(pt.share_boundary_tree(a, [a, b])) == 2
+    joined = pt.cat_tree([a, b], a)
+    assert len(joined) == 2 and joined[0].n_nodes == 2 * a.n_nodes
+
+
+def test_an_empty_tree_keeps_its_slot_in_a_pairing(trees):
+    a = trees[0]
+    empty = pt.delete_tree(a, np.arange(a.n_nodes))
+    result = pt.peters_tree([a, empty], a)
+    assert result[1].shape == (0, 3)
+    assert pt.share_boundary_tree(empty, a) == 0.0
 
 
 def test_savers_taking_a_path_are_left_alone(tmp_path, trees):
@@ -513,3 +553,65 @@ def test_nothing_that_reduces_a_group_got_decorated_by_accident():
 def test_the_docstring_says_it_accepts_a_group():
     assert "list of trees" in pt.gene_tree.__doc__
     assert "one value per tree" in pt.delete_tree.__doc__
+
+
+# ---------------------------------------------------------------------------
+# the rule cannot quietly leak: new per-tree functions must take a population
+# ---------------------------------------------------------------------------
+
+#: Takes a tree first but does not map, each for a stated reason.
+NOT_MAPPED = {
+    "bf_tree", "vonMises_tree",                      # pool their angles into one fit
+    "bin_tree", "sholl_tree",                        # one shared axis for the group
+    "stats_tree", "clone_tree", "gscale_tree", "spread_tree",   # work on the group
+    "cat_tree", "peters_tree", "share_boundary_tree",  # take populations as pairs
+    "ssecat_tree", "syncat_tree",                    # the list is one coupled network
+    "plot_tree",                                     # one scene for the group
+    "save_hoc", "save_mtr", "save_neuroml", "save_nmf", "save_npz", "save_nrn",
+    "save_swc", "save_tree", "t2n_interface",         # written to one path
+    "ver_tree",                                      # maps inside, in core.py
+}
+
+
+def test_every_per_tree_function_takes_a_population_or_says_why():
+    missing = []
+    for name in sorted(pt.__all__):
+        function = getattr(pt, name)
+        if inspect.isclass(function) or not callable(function) or name in NOT_MAPPED:
+            continue
+        try:
+            first = next(iter(inspect.signature(function).parameters))
+        except (StopIteration, TypeError, ValueError):
+            continue
+        if first == "tree" and not hasattr(function, "__population_paired__"):
+            missing.append(name)
+    assert not missing, f"no population support and no stated reason: {missing}"
+
+
+def test_pooled_functions_take_any_nesting_and_empty_cells(trees, empty):
+    deep = [[trees[0], [trees[1], empty]], [], [trees[2]]]
+
+    results = pt.sholl_tree(deep, 20.0, warn_double=False)
+    grid = results[0][0].dd
+    assert np.array_equal(results[0][1][0].dd, grid)
+    assert results[1] == []
+    assert results[0][1][1].s.shape == grid.shape and results[0][1][1].s.sum() == 0
+
+    indices, edges = pt.bin_tree(deep)
+    assert indices[0][1][1].shape == (0,) and len(indices[0][1][0]) == trees[1].n_nodes
+    assert len(edges) == 11
+
+    k, _ = pt.vonMises_tree(deep)
+    assert np.isfinite(k)
+    assert np.isfinite(pt.bf_tree(deep)[1])
+
+
+def test_stats_tree_flattens_inside_each_group_only(trees, empty):
+    res = pt.stats_tree([[trees[0], [trees[1], empty]], trees[2], []],
+                        group_names=["a", "b", "c"])
+    counts = res["summary"].groupby("group").size().to_dict()
+    assert counts == {"a": 3, "b": 1}
+
+
+def test_ver_tree_maps_over_a_population(trees, empty):
+    assert pt.ver_tree([trees[0], [empty]], quiet=True) == [[], [[]]]

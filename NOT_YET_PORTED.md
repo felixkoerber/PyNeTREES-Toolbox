@@ -1,5 +1,12 @@
 # What is not yet ported
 
+> **Status, 2026-11-10.** From `treestoolbox-master`, only the `fix_tree` family,
+> the GUI and MATLAB plumbing remain unported. The "not ported" tables and suggested
+> order below predate this and are kept as history: the silent gaps in section A,
+> `pov_tree`/`x3d_tree`, v7.3 writing and the `GC_biophys` variants are all done.
+> What genuinely remains is the rest of the Active GC Model scripts (section D)
+> and the pattern-separation items listed there.
+
 A complete inventory across the three MATLAB codebases in this repo, gathered
 by enumerating every `.m` file and checking it against `pynetrees.__all__` and
 `gc_model`. Counts are measured, not estimated.

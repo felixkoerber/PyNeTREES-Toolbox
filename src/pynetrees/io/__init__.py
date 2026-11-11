@@ -10,7 +10,7 @@ from .mtr import load_mtr, save_mtr
 from .native import load_npz, load_tree, save_npz, save_tree
 from .neu import load_neu
 from .neuroml import save_neuroml
-from .neurolucida import load_neurolucida
+from .neurolucida import NeurolucidaResult, load_neurolucida
 from .nmf import load_nmf, save_nmf
 from .pov import POV_STYLES, save_pov
 from .swc import load_swc, save_swc
@@ -24,6 +24,7 @@ __all__ = [
     "load_swc",
     "save_swc",
     "load_neurolucida",
+    "NeurolucidaResult",
     "load_mtr",
     "save_mtr",
     "load_neu",

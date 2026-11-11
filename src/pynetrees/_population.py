@@ -50,9 +50,12 @@ a different distance in every cell.
 **Distribution fits** -- ``vonMises_tree``, ``bf_tree``. These pool by
 design: the fit needs one distribution, not one per cell.
 
-**Two-tree functions** -- ``cat_tree``, ``peters_tree``,
-``share_boundary_tree``, ``ssecat_tree``. "A list of trees" is ambiguous
-for these (all pairs? zipped?), so the caller writes the loop they mean.
+**Joined networks** -- ``ssecat_tree``, ``syncat_tree``. Their list *is* one
+network of coupled cells, so the whole list is the input.
+
+Two-tree functions -- ``cat_tree``, ``peters_tree``, ``share_boundary_tree`` --
+take populations through :func:`accepts_tree_pairs`: every pairing by default,
+or element by element with ``pairwise=False``.
 
 **Savers taking a path** -- ``save_swc``, ``save_hoc``, ``save_nmf``, ….
 Mapping them would write every tree to the same file. ``save_tree`` and
@@ -68,8 +71,8 @@ import numpy as np
 
 from .core import Tree
 
-__all__ = ["accepts_population", "is_nested_population", "is_population",
-           "require_population"]
+__all__ = ["accepts_population", "accepts_tree_pairs", "is_nested_population",
+           "is_population", "leaves", "map_leaves", "require_population"]
 
 
 def is_population(obj) -> bool:
@@ -132,6 +135,20 @@ def _children(level, name: str) -> list:
                 f"{type(member).__name__}, not a Tree or a list of them"
             )
     return members
+
+
+def leaves(population) -> list:
+    """Every element of a population, in order, however deeply it is nested."""
+    if isinstance(population, (list, tuple)):
+        return [leaf for member in population for leaf in leaves(member)]
+    return [population]
+
+
+def map_leaves(function, population):
+    """Apply ``function`` to every tree, keeping the population's nesting."""
+    if isinstance(population, (list, tuple)):
+        return [map_leaves(function, member) for member in population]
+    return function(population)
 
 
 def require_population(trees, name: str) -> list[Tree]:
@@ -244,9 +261,9 @@ def accepts_population(func=None, *, paired=()):
             # A list at this level is mapped over, and each element goes back
             # through `wrapper` -- so a tree is computed, a list recurses, and
             # the depth of the result matches the depth of the input however
-            # deep that is. `_children` is what rejects a ragged level.
+            # deep that is. An empty level is a group with nobody in it, and
+            # comes back as an empty group so the indices around it hold.
             members = _children(tree, function.__name__)
-            require_population(members, function.__name__)
 
             split = {}
             if paired:
@@ -280,6 +297,86 @@ def accepts_population(func=None, *, paired=()):
 
     return decorate if func is None else decorate(func)
 
+
+def accepts_tree_pairs(*, empty=None):
+    """Let a two-tree function take populations of trees on either side.
+
+    With ``pairwise=True`` (the default) every tree of the first population
+    meets every tree of the second. The result has the first population's
+    nesting, and each of its leaves has the second population's nesting.
+    With ``pairwise=False`` trees are matched element by element, and the
+    two populations must have the same nesting.
+
+    Parameters
+    ----------
+    empty : callable, optional
+        ``empty(first, second)`` gives the result when either tree of a pair
+        has no nodes, so that an empty cell keeps its slot.
+    """
+
+    def decorate(function):
+        name = function.__name__
+
+        def one(first, second, args, kwargs):
+            if empty is not None and 0 in (first.n_nodes, second.n_nodes):
+                return empty(first, second)
+            return function(first, second, *args, **kwargs)
+
+        def every_pair(first, second, args, kwargs):
+            if isinstance(first, (list, tuple)):
+                return [every_pair(m, second, args, kwargs)
+                        for m in _children(first, name)]
+            if isinstance(second, (list, tuple)):
+                return [every_pair(first, m, args, kwargs)
+                        for m in _children(second, name)]
+            return one(first, second, args, kwargs)
+
+        def matched(first, second, args, kwargs, where="population"):
+            first_many = isinstance(first, (list, tuple))
+            if first_many != isinstance(second, (list, tuple)):
+                raise ValueError(
+                    f"{name}: with pairwise=False both populations need the "
+                    f"same nesting, but {where} is a tree on one side and a "
+                    f"list on the other"
+                )
+            if not first_many:
+                return one(first, second, args, kwargs)
+            left, right = _children(first, name), _children(second, name)
+            if len(left) != len(right):
+                raise ValueError(
+                    f"{name}: with pairwise=False both populations need the "
+                    f"same nesting, but {where} has {len(left)} elements on "
+                    f"one side and {len(right)} on the other"
+                )
+            return [matched(a, b, args, kwargs, f"{where}[{index}]")
+                    for index, (a, b) in enumerate(zip(left, right))]
+
+        @functools.wraps(function)
+        def wrapper(first, second, *args, pairwise=True, **kwargs):
+            if isinstance(first, Tree) and isinstance(second, Tree):
+                return one(first, second, args, kwargs)
+            combine = every_pair if pairwise else matched
+            return combine(first, second, args, kwargs)
+
+        signature = inspect.signature(function)
+        wrapper.__signature__ = signature.replace(parameters=[
+            *signature.parameters.values(),
+            inspect.Parameter("pairwise", inspect.Parameter.KEYWORD_ONLY, default=True),
+        ])
+        if wrapper.__doc__:
+            wrapper.__doc__ = wrapper.__doc__.rstrip() + _PAIRS_NOTE
+        return wrapper
+
+    return decorate
+
+
+_PAIRS_NOTE = """
+
+    Either tree may be a **population** (a list of trees, nested to any depth).
+    By default every pairing is computed, with the result nested as the first
+    population and then the second. ``pairwise=False`` matches them element by
+    element instead, and raises if their nesting differs.
+    """
 
 _NOTE = """
 

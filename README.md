@@ -29,7 +29,7 @@ enough that existing TREES knowledge transfers directly — see
 - **Python 3.10+** (developed and tested on 3.11)
 - **NumPy, SciPy, pandas** — installed automatically
 - **PyVista, matplotlib, scikit-image** — optional, for plotting
-- **mat73** — optional, to read MATLAB v7.3 `.mtr`/`.mat` files, which is
+- **h5py** — optional, to read and write MATLAB v7.3 `.mtr`/`.mat` files, which is
   what a current TREES install writes
 - **NEURON 8+** — optional, only for `pynetrees.neuron_bridge`
 
@@ -87,7 +87,7 @@ The extras are separable if you want a smaller install:
 | `pip install -e ".[all-no-blender]"` | Same minus Blender, and therefore the numpy 2 / Python 3.12+ variant |
 | `pip install -e ".[all-no-neuron]"` | Same as `all` minus NEURON — the default on Windows |
 | `pip install -e ".[plot]"` | + PyVista, matplotlib, scikit-image — `pynetrees.plotting`, `hull_tree`'s 3D isosurface, and the tutorials |
-| `pip install -e ".[matlab]"` | + mat73 — **v7.3 `.mtr`/`.mat` files**, which is what current MATLAB writes |
+| `pip install -e ".[matlab]"` | + h5py — **v7.3 `.mtr`/`.mat` files**, which is what current MATLAB writes |
 | `pip install -e ".[nmf]"` | + h5py — `.nmf` files |
 | `pip install -e ".[stacks]"` | + tifffile, imageio, scikit-image — `pynetrees.stacks` |
 | `pip install -e ".[notebook]"` | + ipykernel, ipywidgets, trame — run the notebooks in `examples/` |
@@ -156,7 +156,7 @@ import pynetrees as pt
 tree = pt.sample_tree()               # bundled 197-node reconstruction
 tree = pt.load_swc("cell.swc")        # or your own: SWC,
 tree = pt.load_neurolucida("cell.ASC")  # NeuroLucida,
-trees = pt.load_mtr("population.mtr")   # or a MATLAB .mtr archive
+trees = pt.load_mtr("population.mtr")   # or a MATLAB .mtr archive, nesting kept
 
 print(f"{tree.n_nodes} nodes, "
       f"{pt.len_tree(tree).sum():.0f} um of cable, "
@@ -242,7 +242,7 @@ subprocess, no file exchange — see [Simulation](#simulation) below.
 | [`neuron_bridge.py`](src/pynetrees/neuron_bridge.py) | Tree → live NEURON compartmental model |
 | [`blender.py`](src/pynetrees/blender.py) | Native Blender export and headless rendering (opt-in, `[blender]` extra) |
 
-All 173 public names are listed:
+All 192 public names are listed:
 
 - one line each, grouped by purpose, in [docs/api-overview.md](docs/api-overview.md);
 - in full — every signature and complete docstring — in
@@ -315,25 +315,20 @@ review, ordered and assessed.
 a topological (persistent-homology) description of morphology, electrotonics,
 statistics, image-stack loading and diameter fitting, native Blender export, a
 foundational NEURON integration, and the Beining et al. (2017) granule-cell model
-(`GC_init`, with its biophysics table, morphologies and `.mod` sources bundled). Every exported function accepts a population
-(a list of trees) as well as a single one, and handles a tree with no nodes as a
-value rather than an error. See [NOT_YET_PORTED.md](NOT_YET_PORTED.md) for the
+(`GC_init`, with its biophysics table, variants, morphologies and `.mod` sources
+bundled). Per-tree functions accept a population (a list of trees, nested to any
+depth) as well as a single one, two-tree functions take every pairing or match
+element by element, and a tree with no nodes is a value rather than an error. See [NOT_YET_PORTED.md](NOT_YET_PORTED.md) for the
 complete, itemised inventory.
 
 **Not ported:**
 
 - `cgui_tree` and the GUIDE-based GUI — no direct equivalent planned; a Python
   equivalent would be a rewrite against a different toolkit, not a port
-- `pov_tree` / `x3d_tree` (POV-Ray / X3D export) — planned (V6); `pynetrees.blender`
-  covers the same rendering need today
 - T2N's protocol library (IV/FI curves, resonance, bAP) and its cluster/SSH
   execution mode — thin wrappers over `run_current_clamp`; add on demand
 - `fix_tree` / `fix_tree_UI` / `finetune_fix_tree` — a MATLAB figure-callback GUI;
   MATLAB's own todo list flags these as incomplete
-- `GC_biophys` (the Active GC Model's active-conductance fitting) — substantial,
-  scoped separately
-- v7.3 (HDF5) writing for `save_tree`/`save_mtr` — current write path is MATLAB v5,
-  which caps a single variable at ~2 GB
 
 ## License
 

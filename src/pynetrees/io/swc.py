@@ -3,10 +3,8 @@
 Mirrors the ``'.swc'`` branch of ``IO/load_tree.m`` (reading) and the core of
 ``IO/swc_tree.m`` (writing).
 
-Design note (see PORT_STATUS.md, Design Decisions #8): this reader does
-*not* call ``repair_tree`` -- that wasn't ported yet when this module was
-written (Phase 1, before Phase 4). It faithfully builds whatever topology
-the file encodes, including:
+Like MATLAB's reader, it passes each tree through ``repair_tree`` by default;
+``repair=False`` gives whatever topology the file encodes, including:
 
 - unsorted / non-contiguous SWC node indices (handled via an index lookup,
   same idea as MATLAB's fallback branch), and
@@ -33,8 +31,16 @@ from ..graphtheory import idpar_tree
 SWC_COLUMNS = ("index", "type", "x", "y", "z", "radius", "parent")
 
 
-def load_swc(path: str | Path) -> Tree | list[Tree]:
-    """Load an SWC file into one :class:`Tree`, or a list if it has >1 root."""
+def load_swc(path: str | Path, repair: bool = True) -> Tree | list[Tree]:
+    """Load an SWC file into one :class:`Tree`, or a list if it has >1 root.
+
+    If ``repair`` (default), the result goes through
+    :func:`~pynetrees.repair_tree`, as MATLAB's ``load_tree`` does by default.
+    """
+    if repair:
+        from ..edit import repair_tree
+
+        return repair_tree(load_swc(path, repair=False))
     path = Path(path)
     swc = _read_swc_rows(path)
 
